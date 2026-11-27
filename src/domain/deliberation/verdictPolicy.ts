@@ -10,7 +10,7 @@ export interface VerdictDraft {
 
 const RISK_RANK: Record<MergeRisk, number> = { low: 0, medium: 1, high: 2 };
 
-const higherRisk = (a: MergeRisk, b: MergeRisk): MergeRisk => (RISK_RANK[a] >= RISK_RANK[b] ? a : b);
+export const higherRisk = (a: MergeRisk, b: MergeRisk): MergeRisk => (RISK_RANK[a] >= RISK_RANK[b] ? a : b);
 const hasSeverity = (findings: readonly Finding[], ...severities: Finding["severity"][]) =>
   findings.some((f) => severities.includes(f.severity));
 

@@ -1,7 +1,8 @@
 import type { ChangeSet } from "../change/ChangeSet.js";
-import { DomainError, type Consensus, type Decision, type Finding, type Language, type Patch, type Severity } from "./model.js";
+import { DomainError, type Consensus, type Decision, type Finding, type Language, type MergeRisk, type Patch, type Severity } from "./model.js";
 import { PERSONAS } from "./personas.js";
 import { decisionKey, isPublished, type SessionState } from "./state.js";
+import { boundDecision, higherRisk, riskFloor } from "./verdictPolicy.js";
 
 export interface PlannedComment {
   readonly path: string;
@@ -95,10 +96,16 @@ export function planPublication(state: SessionState, changeSet: ChangeSet): Publ
   for (const patch of selection.suggestions) comments.push(suggestionComment(patch, patchBody(patch, state)));
 
   const inSummary = selection.findings.filter((selected) => selected.placement === "summary").map((selected) => selected.finding);
+  // The verdict's rule, applied to what will actually be published: the human's decisions reach the outcome.
+  const published = selection.findings.map((selected) => selected.finding);
+  const outcome: Outcome = {
+    decision: boundDecision(state.verdict.proposedDecision, published),
+    mergeRisk: higherRisk(state.verdict.mergeRisk, riskFloor(published)),
+  };
   return {
-    decision: state.verdict.decision,
+    decision: outcome.decision,
     councilDecision: state.verdict.decision,
-    body: summaryBody(state, inSummary, selection.summaryPatches, selection.findings.length),
+    body: summaryBody(state, outcome, inSummary, selection.summaryPatches, published.length),
     comments,
     summaryFindings: inSummary.length,
   };
@@ -161,15 +168,21 @@ function patchBody(patch: Patch, state: SessionState): string {
   return `${patchNote(patch, state.language)}\n\n_${t.fixes}: ${fixes}_`;
 }
 
-function summaryBody(state: SessionState, inSummary: readonly Finding[], offline: readonly Patch[], publishedCount: number): string {
+interface Outcome {
+  readonly decision: Decision;
+  readonly mergeRisk: MergeRisk;
+}
+
+function summaryBody(state: SessionState, outcome: Outcome, inSummary: readonly Finding[], offline: readonly Patch[], publishedCount: number): string {
   const t = LABELS[state.language];
   const verdict = state.verdict!;
   const lines = [
-    `## 🧠 CodeR Council — ${t.decisions[verdict.decision]} · ${t.mergeRisk} ${t.risk[verdict.mergeRisk]}`,
+    `## 🧠 CodeR Council — ${t.decisions[outcome.decision]} · ${t.mergeRisk} ${t.risk[outcome.mergeRisk]}`,
     "",
     prose(verdict.summary),
   ];
-  if (verdict.overriddenByPolicy && verdict.decision !== verdict.proposedDecision) lines.push("", `> ${t.policyOverride}`);
+  if (verdict.decision !== verdict.proposedDecision && verdict.decision !== "approve") lines.push("", `> ${t.policyOverride[verdict.decision]}`);
+  if (outcome.decision !== verdict.decision) lines.push("", `> ${t.humanOverride[outcome.decision](t.decisions[verdict.decision].toLowerCase())}`);
   if (verdict.humanAttention.length > 0) {
     lines.push("", `### ${t.humanAttention}`, ...verdict.humanAttention.map((item) => `- ${prose(item)}`));
   }
@@ -238,7 +251,10 @@ interface Labels {
   readonly generalFindings: string;
   readonly finding: string;
   readonly where: string;
-  readonly policyOverride: string;
+  /** Why policy changed the moderator's decision into this one. */
+  readonly policyOverride: Readonly<Record<"request_changes" | "comment", string>>;
+  /** Why the published decision differs from the council's verdict. */
+  readonly humanOverride: Record<Decision, (councilDecision: string) => string>;
   readonly stats: (raised: number, published: number, patches: number) => string;
 }
 
@@ -260,7 +276,15 @@ const LABELS: Record<Language, Labels> = {
     generalFindings: "Other findings",
     finding: "Finding",
     where: "Where",
-    policyOverride: "The moderator proposed approval, but policy blocks approval while the council endorses a blocker.",
+    policyOverride: {
+      request_changes: "The moderator proposed approval, but policy blocks approval while the council endorses a blocker.",
+      comment: "The moderator asked for changes, but policy publishes a comment when no endorsed blocker or major finding grounds the request.",
+    },
+    humanOverride: {
+      request_changes: (council) => `Published as a request for changes: the council's verdict was "${council}", and the human reviewer accepted findings that call for changes.`,
+      comment: (council) => `Published as a comment: the council's verdict was "${council}", and the human reviewer dismissed the findings that grounded it.`,
+      approve: (council) => `Published as an approval: the council's verdict was "${council}", and the human reviewer dismissed the blocker that prevented it.`,
+    },
     stats: (raised, published, patches) => `${raised} findings raised · ${published} published · ${patches} patches proposed`,
   },
   pt: {
@@ -280,7 +304,15 @@ const LABELS: Record<Language, Labels> = {
     generalFindings: "Outros achados",
     finding: "Achado",
     where: "Onde",
-    policyOverride: "O moderador propôs aprovar, mas a política bloqueia a aprovação enquanto o conselho endossa um bloqueante.",
+    policyOverride: {
+      request_changes: "O moderador propôs aprovar, mas a política bloqueia a aprovação enquanto o conselho endossa um bloqueante.",
+      comment: "O moderador pediu mudanças, mas a política publica um comentário quando nenhum achado bloqueante ou grave endossado fundamenta o pedido.",
+    },
+    humanOverride: {
+      request_changes: (council) => `Publicado como pedido de mudanças: o veredito do conselho foi "${council}", e o revisor humano aceitou achados que pedem mudanças.`,
+      comment: (council) => `Publicado como comentário: o veredito do conselho foi "${council}", e o revisor humano descartou os achados que o fundamentavam.`,
+      approve: (council) => `Publicado como aprovação: o veredito do conselho foi "${council}", e o revisor humano descartou o bloqueante que a impedia.`,
+    },
     stats: (raised, published, patches) => `${raised} achados levantados · ${published} publicados · ${patches} patches propostos`,
   },
 };

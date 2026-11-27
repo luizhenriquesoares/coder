@@ -412,6 +412,38 @@ describe("planPublication", () => {
     expect(plan.comments.map((c) => c.line)).toEqual([3, 2]);
     expect(plan.comments[0]!.body).not.toContain("```suggestion");
     expect(plan.comments[1]!.body).toContain("Rename i");
+    expect(plan).toMatchObject({ decision: "request_changes", councilDecision: "request_changes" }); // F-1 still grounds it
+
+    // Dismissing every finding that grounded the request for changes publishes a comment.
+    const dismissed = planPublication(
+      concluded((session) => {
+        session.recordHumanDecision({ target: { kind: "finding", id: "F-1" }, action: "dismiss", by: "luiz" });
+        session.recordHumanDecision({ target: { kind: "finding", id: "F-2" }, action: "dismiss", by: "luiz" });
+        session.recordHumanDecision({ target: { kind: "finding", id: "F-3" }, action: "accept", by: "luiz" });
+      }).state,
+      changeSet,
+    );
+    expect(dismissed).toMatchObject({ decision: "comment", councilDecision: "request_changes" });
+    expect(dismissed.body).toContain("## 🧠 CodeR Council — Comment · merge risk medium");
+    expect(dismissed.body).toContain(
+      '> Published as a comment: the council\'s verdict was "request changes", and the human reviewer dismissed the findings that grounded it.',
+    );
+
+    // Accepting a contested blocker on an approved change publishes a request for changes, at the risk it implies.
+    const session = debated("blocker", { architect: "agree", cleancode: "disagree" });
+    session.issueVerdict("moderator", { decision: "approve", mergeRisk: "low", summary: "Fine.", humanAttention: [] });
+    session.conclude();
+    session.recordHumanDecision({ target: { kind: "finding", id: "F-1" }, action: "accept", by: "luiz" });
+    const accepted = planPublication(session.state, changeSet);
+    expect(accepted).toMatchObject({ decision: "request_changes", councilDecision: "approve" });
+    expect(accepted.body).toContain("## 🧠 CodeR Council — Request changes · merge risk high");
+    expect(accepted.body).toContain("> Published as a request for changes");
+  });
+
+  it("publishes the council's decision when the human decided nothing", () => {
+    const plan = planPublication(concluded().state, changeSet);
+    expect(plan.decision).toBe(plan.councilDecision);
+    expect(plan.body).not.toContain("Published as");
   });
 
   it("writes the review in the session language", () => {
