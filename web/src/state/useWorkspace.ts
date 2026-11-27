@@ -8,6 +8,7 @@ import type { PublicationPlan } from "../../../src/domain/deliberation/publicati
 import { evolve, foldEvents, type SessionState } from "../../../src/domain/deliberation/state.js";
 import { ApiError } from "../api/HttpCoderApi.js";
 import { STRINGS } from "./i18n.js";
+import { everyWhileVisible } from "./polling.js";
 import { sameRef } from "./selectors.js";
 
 const INBOX_REFRESH_MS = 15_000;
@@ -171,12 +172,11 @@ export function useWorkspace(api: CoderApi, language: Language): [WorkspaceModel
 
   useEffect(() => void load(), [load]);
 
-  // New pull requests and automatic reviews show up without a reload.
+  // New pull requests and automatic reviews show up without a reload, but nobody is polled for while the tab is hidden.
   const serverMode = model.config?.mode === "server";
   useEffect(() => {
     if (!serverMode) return;
-    const timer = setInterval(() => void refreshInbox(), INBOX_REFRESH_MS);
-    return () => clearInterval(timer);
+    return everyWhileVisible(document, INBOX_REFRESH_MS, () => void refreshInbox());
   }, [serverMode, refreshInbox]);
 
   // Open the first pull request once the inbox arrives.
