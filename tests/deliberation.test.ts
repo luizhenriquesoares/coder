@@ -250,6 +250,27 @@ describe("ConsensusPolicy", () => {
     expect(level(position("architect", "agree"), position("cleancode", "agree"), position("refactoring", "disagree"))).toBe("endorsed");
   });
 
+  // The rule: endorsed when support minus opposition is at least 2, the author counting as support.
+  it("endorses 2 for and 0 against (the author and one more)", () => {
+    expect(level(position("architect", "agree"))).toBe("endorsed");
+  });
+
+  it("leaves 2 for and 1 against contested", () => {
+    expect(level(position("architect", "agree"), position("cleancode", "disagree"))).toBe("contested");
+  });
+
+  it("endorses 3 for and 1 against", () => {
+    expect(level(position("architect", "agree"), position("refactoring", "refine"), position("cleancode", "disagree"))).toBe("endorsed");
+  });
+
+  it("rejects when more are against than for", () => {
+    expect(level(position("architect", "disagree"), position("cleancode", "disagree"))).toBe("rejected");
+  });
+
+  it("leaves a finding nobody but its author spoke about unreviewed", () => {
+    expect(level()).toBe("unreviewed");
+  });
+
   it("ignores the author's own vote and positions on other findings", () => {
     const consensus = computeConsensus(finding, [position("staff", "disagree"), { ...position("architect", "disagree"), findingId: "F-2" }]);
     expect(consensus).toMatchObject({ level: "unreviewed", support: ["staff"], opposition: [] });
