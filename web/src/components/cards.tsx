@@ -2,7 +2,8 @@ import type { Finding, Language, Patch, Position, ReviewerId } from "../../../sr
 import { PERSONAS } from "../../../src/domain/deliberation/personas.js";
 import type { SessionState } from "../../../src/domain/deliberation/state.js";
 import type { Strings } from "../state/i18n.js";
-import { choiceFor, fileName, levelOf, patchesFixing, willPublish, type HumanChoice } from "../state/selectors.js";
+import { isPublished } from "../../../src/domain/deliberation/state.js";
+import { choiceFor, fileName, levelOf, patchesFixing, type HumanChoice } from "../state/selectors.js";
 import { Avatar, Icon, LevelChip, RiskChip, SeverityMark } from "./primitives.js";
 
 export interface CardContext {
@@ -145,8 +146,8 @@ export function FindingCard({ finding, expanded, variant = "list", ...context }:
           <footer className="finding__actions">
             <DecisionButtons choice={choice} disabled={context.readOnly} t={t} onChoose={(action) => context.onDecide("finding", finding.id, action)} />
             {settled ? (
-              <span className={`publish-state${willPublish(state, finding) ? " is-yes" : ""}`}>
-                {choice === "accept" ? t.acceptedByYou : choice === "dismiss" ? t.dismissedByYou : willPublish(state, finding) ? t.willPublish : t.wontPublish}
+              <span className={`publish-state${isPublished(state, finding) ? " is-yes" : ""}`}>
+                {choice === "accept" ? t.acceptedByYou : choice === "dismiss" ? t.dismissedByYou : isPublished(state, finding) ? t.willPublish : t.wontPublish}
               </span>
             ) : null}
           </footer>

@@ -37,7 +37,7 @@ export class DemoSourceControl implements SourceControl {
   }
 
   async publishReview(snapshot: PullRequestSnapshot, plan: PublicationPlan): Promise<PublishedReview> {
-    return { url: snapshot.url, event: plan.event, inlineComments: plan.comments.length, simulated: true };
+    return { url: snapshot.url, decision: plan.decision, inlineComments: plan.comments.length, simulated: true };
   }
 
   private find(ref: PullRequestRef): DemoPullRequest {

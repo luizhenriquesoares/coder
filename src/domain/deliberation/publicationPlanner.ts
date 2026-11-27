@@ -1,81 +1,107 @@
 import type { ChangeSet } from "../change/ChangeSet.js";
-import type { Consensus, Finding, Language, Patch, Severity } from "./model.js";
+import { DomainError, type Consensus, type Decision, type Finding, type Language, type Patch, type Severity } from "./model.js";
 import { PERSONAS } from "./personas.js";
-import { decisionKey, levelOf, type SessionState } from "./state.js";
+import { decisionKey, isPublished, type SessionState } from "./state.js";
 
-export type ReviewEvent = "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
-
-export interface InlineComment {
+export interface PlannedComment {
   readonly path: string;
   readonly line: number;
-  /** Present for multi-line comments (GitHub suggestions spanning a range). */
+  /** Present for multi-line comments (suggestions spanning a range). */
   readonly startLine?: number;
   readonly body: string;
+  /** The finding this comment publishes. */
+  readonly findingId?: string;
+  /** Set when the comment carries a suggestion. */
+  readonly patchId?: string;
 }
 
 export interface PublicationPlan {
-  readonly event: ReviewEvent;
+  /** What the review is published as, after the human's decisions. */
+  readonly decision: Decision;
+  /** The council's verdict, before the human's decisions. */
+  readonly councilDecision: Decision;
   readonly body: string;
-  readonly comments: readonly InlineComment[];
+  readonly comments: readonly PlannedComment[];
   readonly summaryFindings: number;
 }
 
-const EVENT_BY_DECISION = { approve: "APPROVE", request_changes: "REQUEST_CHANGES", comment: "COMMENT" } as const;
+/** A published finding, and where it goes. `patch` is the suggestion shown in its own comment. */
+export interface SelectedFinding {
+  readonly finding: Finding;
+  readonly placement: "inline" | "summary";
+  readonly patch: Patch | null;
+}
+
+/** What will be published, as data: the decision about the review before any of it is rendered. */
+export interface PublicationSelection {
+  readonly findings: readonly SelectedFinding[];
+  /** Suggestions that fit in the diff but sit on no published finding's line: a comment of their own. */
+  readonly suggestions: readonly Patch[];
+  /** Patches that cannot be suggested on the diff: shown in the summary. */
+  readonly summaryPatches: readonly Patch[];
+}
+
 const SEVERITY_ICON: Record<Severity, string> = { blocker: "🛑", major: "🔶", minor: "🔹", nit: "▫️" };
 
 /**
  * Decides what the council publishes back to the pull request.
  *
- * A finding is published when a human accepted it, or when the council
- * endorsed it and no human dismissed it. Each published finding becomes an
- * inline comment when its line is visible in the diff, otherwise it goes into
- * the summary. Each usable patch becomes a GitHub suggestion: merged into the
- * comment of a finding it fixes when that finding sits inside the patched
- * lines, or as a comment of its own.
+ * A finding is published when `isPublished` says so. Each published finding
+ * becomes an inline comment when its line was confirmed against the file and
+ * is visible in the diff, otherwise it goes into the summary. Each usable
+ * patch becomes a suggestion: merged into the comment of a finding it fixes
+ * when that finding sits inside the patched lines, or as a comment of its own.
  */
-export function planPublication(state: SessionState, changeSet: ChangeSet): PublicationPlan {
-  if (!state.verdict) throw new Error("Nothing to publish before the verdict");
-  const published = state.findings.filter((finding) => isPublished(finding, state));
+export function selectPublication(state: SessionState, changeSet: ChangeSet): PublicationSelection {
+  const published = state.findings.filter((finding) => isPublished(state, finding));
   const publishedIds = new Set(published.map((finding) => finding.id));
   const patches = state.patches.filter(
     (patch) => patch.applicable && !isDismissed(state, patch.id) && patch.findingIds.some((id) => publishedIds.has(id)),
   );
-  const inline = patches.filter((patch) => fitsAsSuggestion(patch, changeSet));
-  const offline = patches.filter((patch) => !inline.includes(patch));
+  const suggestible = patches.filter((patch) => fitsAsSuggestion(patch, changeSet));
 
   const merged = new Map<string, Patch>(); // finding id → patch shown in the same comment
-  for (const patch of inline) {
+  for (const patch of suggestible) {
     const host = published.find((f) => !merged.has(f.id) && patch.findingIds.includes(f.id) && isInside(f, patch));
     if (host) merged.set(host.id, patch);
   }
   const mergedPatches = new Set(merged.values());
 
-  const comments: InlineComment[] = [];
-  const inSummary: Finding[] = [];
-  for (const finding of published) {
-    const body = findingBody(finding, state.consensus[finding.id], state.language);
-    const patch = merged.get(finding.id);
-    const { path, line } = finding.location;
-    if (patch) comments.push(suggestionComment(patch, `${body}\n\n${patchNote(patch, state.language)}`));
-    else if (path && line && changeSet.isCommentable(path, line)) comments.push({ path, line, body });
-    else inSummary.push(finding);
-  }
-  for (const patch of inline) {
-    if (!mergedPatches.has(patch)) comments.push(suggestionComment(patch, patchBody(patch, state)));
-  }
-
+  const findings = published.map((finding): SelectedFinding => {
+    const patch = merged.get(finding.id) ?? null;
+    const { path, line, anchored } = finding.location;
+    const inline = patch !== null || (anchored && path !== null && line !== null && changeSet.isCommentable(path, line));
+    return { finding, placement: inline ? "inline" : "summary", patch };
+  });
   return {
-    event: EVENT_BY_DECISION[state.verdict.decision],
-    body: summaryBody(state, inSummary, offline, published.length),
-    comments,
-    summaryFindings: inSummary.length,
+    findings,
+    suggestions: suggestible.filter((patch) => !mergedPatches.has(patch)),
+    summaryPatches: patches.filter((patch) => !suggestible.includes(patch)),
   };
 }
 
-function isPublished(finding: Finding, state: SessionState): boolean {
-  const decision = state.decisions[decisionKey({ kind: "finding", id: finding.id })];
-  if (decision) return decision.action === "accept";
-  return levelOf(state, finding) === "endorsed";
+/** Renders the selection: what the workspace previews is exactly what the source control receives. */
+export function planPublication(state: SessionState, changeSet: ChangeSet): PublicationPlan {
+  if (!state.verdict) throw new DomainError("Nothing to publish before the verdict");
+  const selection = selectPublication(state, changeSet);
+
+  const comments: PlannedComment[] = [];
+  for (const { finding, placement, patch } of selection.findings) {
+    if (placement === "summary") continue;
+    const body = findingBody(finding, state.consensus[finding.id], state.language);
+    if (patch) comments.push(suggestionComment(patch, `${body}\n\n${patchNote(patch, state.language)}`, finding.id));
+    else comments.push({ path: finding.location.path!, line: finding.location.line!, body, findingId: finding.id });
+  }
+  for (const patch of selection.suggestions) comments.push(suggestionComment(patch, patchBody(patch, state)));
+
+  const inSummary = selection.findings.filter((selected) => selected.placement === "summary").map((selected) => selected.finding);
+  return {
+    decision: state.verdict.decision,
+    councilDecision: state.verdict.decision,
+    body: summaryBody(state, inSummary, selection.summaryPatches, selection.findings.length),
+    comments,
+    summaryFindings: inSummary.length,
+  };
 }
 
 function isDismissed(state: SessionState, patchId: string): boolean {
@@ -91,13 +117,15 @@ function isInside(finding: Finding, patch: Patch): boolean {
   return path === patch.path && line !== null && line >= patch.startLine! && line <= patch.endLine!;
 }
 
-function suggestionComment(patch: Patch, body: string): InlineComment {
+function suggestionComment(patch: Patch, body: string, findingId?: string): PlannedComment {
   const multiLine = patch.endLine! > patch.startLine!;
   return {
     path: patch.path,
     line: patch.endLine!,
     ...(multiLine ? { startLine: patch.startLine! } : {}),
     body: `${body}\n\n\`\`\`suggestion\n${patch.replacement.replace(/\n+$/, "")}\n\`\`\``,
+    ...(findingId ? { findingId } : {}),
+    patchId: patch.id,
   };
 }
 

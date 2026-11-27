@@ -7,6 +7,7 @@ import {
   type Consensus,
   type ConsensusLevel,
   type DeclinedFinding,
+  type Decision,
   type Engine,
   type Finding,
   type HumanDecision,
@@ -34,7 +35,8 @@ export interface Publication {
   readonly url: string;
   readonly inlineComments: number;
   readonly summaryFindings: number;
-  readonly event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
+  /** How the review was actually posted: `comment` when the source control refused the verdict. */
+  readonly decision: Decision;
   readonly simulated: boolean;
   readonly at: string;
 }
@@ -82,6 +84,13 @@ export function levelOf(state: Pick<SessionState, "consensus">, finding: Pick<Fi
 
 export function decisionKey(target: HumanDecision["target"]): string {
   return `${target.kind}:${target.id}`;
+}
+
+/** The publication rule: a finding is published when a human accepted it, or when the council endorsed it and no human dismissed it. */
+export function isPublished(state: Pick<SessionState, "consensus" | "decisions">, finding: Pick<Finding, "id">): boolean {
+  const decision = state.decisions[decisionKey({ kind: "finding", id: finding.id })];
+  if (decision) return decision.action === "accept";
+  return levelOf(state, finding) === "endorsed";
 }
 
 /** Builds a session state from its full event stream. */

@@ -220,12 +220,12 @@ describe("live mode over HTTP", () => {
     expect(decided.body.decisions["patch:P-1"]).toMatchObject({ action: "accept" });
 
     const plan = (await call<PublicationPlan>(`/api/sessions/${sessionId}/publication`)).body;
-    expect(plan).toMatchObject({ event: "REQUEST_CHANGES", summaryFindings: 0 });
+    expect(plan).toMatchObject({ decision: "request_changes", councilDecision: "request_changes", summaryFindings: 0 });
     expect(plan.comments).toHaveLength(2);
 
     const published = await call<SessionState>(`/api/sessions/${sessionId}/publish`, { method: "POST" });
     expect(published.status).toBe(200);
-    expect(published.body.publication).toMatchObject({ simulated: false, event: "REQUEST_CHANGES", inlineComments: 2, url: expect.stringContaining("pullrequestreview") });
+    expect(published.body.publication).toMatchObject({ simulated: false, decision: "request_changes", inlineComments: 2, url: expect.stringContaining("pullrequestreview") });
 
     expect(github.reviewAttempts).toHaveLength(1);
     const review = github.reviewAttempts[0]!;

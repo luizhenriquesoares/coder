@@ -3,6 +3,7 @@ import type { RiskProfile } from "../change/riskAssessment.js";
 import type {
   Consensus,
   DeclinedFinding,
+  Decision,
   Engine,
   Finding,
   HumanDecision,
@@ -85,7 +86,8 @@ export type ReviewPublished = EventEnvelope<
     readonly url: string;
     readonly inlineComments: number;
     readonly summaryFindings: number;
-    readonly event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
+    /** How the review was actually posted: `comment` when the source control refused the verdict. */
+    readonly decision: Decision;
     readonly simulated: boolean;
   }
 >;

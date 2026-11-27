@@ -105,7 +105,7 @@ describe("demo council on the coupon pull request", () => {
     const plan = await application.publicationPreview(sessionId);
     const snapshot = await new DemoSourceControl().getSnapshot(coupon);
     const changeSet = ChangeSet.fromSnapshot(snapshot);
-    expect(plan.event).toBe("REQUEST_CHANGES");
+    expect(plan).toMatchObject({ decision: "request_changes", councilDecision: "request_changes" });
     // 14 published findings (4 of them carrying the patch that fixes them) + 5 patches as comments of their own.
     expect(plan.summaryFindings).toBe(0);
     expect(plan.comments).toHaveLength(19);
@@ -122,7 +122,7 @@ describe("demo council on the coupon pull request", () => {
     expect(plan.body).toContain("Where a human should look");
 
     const published = await application.publish(sessionId);
-    expect(published.publication).toMatchObject({ simulated: true, event: "REQUEST_CHANGES", inlineComments: plan.comments.length });
+    expect(published.publication).toMatchObject({ simulated: true, decision: "request_changes", inlineComments: plan.comments.length });
     expect(state.publication).toBeNull();
   });
 

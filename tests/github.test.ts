@@ -141,7 +141,8 @@ describe("GitHub adapter against the REST API", () => {
   });
 
   const plan: PublicationPlan = {
-    event: "REQUEST_CHANGES",
+    decision: "request_changes",
+    councilDecision: "request_changes",
     body: "## Council verdict",
     summaryFindings: 0,
     comments: [
@@ -157,7 +158,7 @@ describe("GitHub adapter against the REST API", () => {
 
     expect(published).toEqual({
       url: "https://github.com/acme/shop/pull/7#pullrequestreview-901",
-      event: "REQUEST_CHANGES",
+      decision: "request_changes",
       inlineComments: 2,
       simulated: false,
     });
@@ -179,9 +180,9 @@ describe("GitHub adapter against the REST API", () => {
     github.rejectReview = (review) => (review.event === "COMMENT" ? null : 422);
     const published = await source.publishReview(await source.getSnapshot(ref), plan);
 
-    expect(published).toMatchObject({ event: "COMMENT", inlineComments: 2 });
+    expect(published).toMatchObject({ decision: "comment", inlineComments: 2 });
     expect(github.reviewAttempts.map((attempt) => attempt.event)).toEqual(["REQUEST_CHANGES", "COMMENT"]);
-    expect(github.reviewAttempts[1]!.body).toContain("Council verdict: request changes");
+    expect(github.reviewAttempts[1]!.body).toBe(plan.body); // its headline already states the verdict, in the session language
   });
 
   it("keeps every comment in the body when GitHub refuses the inline comments too", async () => {
@@ -189,7 +190,7 @@ describe("GitHub adapter against the REST API", () => {
     github.rejectReview = (review) => (review.comments.length > 0 ? 422 : null);
     const published = await source.publishReview(await source.getSnapshot(ref), plan);
 
-    expect(published).toMatchObject({ event: "COMMENT", inlineComments: 0 });
+    expect(published).toMatchObject({ decision: "comment", inlineComments: 0 });
     const body = github.reviewAttempts.at(-1)!.body;
     expect(body).toContain("`src/limiter.ts:6`");
     expect(body).toContain("Never expires");

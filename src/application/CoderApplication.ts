@@ -156,7 +156,7 @@ export class CoderApplication implements CoderApi {
       const published = await this.deps.catalog.source(snapshot.ref.provider).publishReview(snapshot, plan);
       session.recordPublication({
         url: published.url,
-        event: published.event,
+        decision: published.decision,
         inlineComments: published.inlineComments,
         summaryFindings: plan.summaryFindings,
         simulated: published.simulated,

@@ -9,7 +9,8 @@ import type {
   RawFileChange,
 } from "../../domain/change/types.js";
 import { isBinaryPath } from "../../domain/change/language.js";
-import type { InlineComment, PublicationPlan, ReviewEvent } from "../../domain/deliberation/publicationPlanner.js";
+import type { Decision } from "../../domain/deliberation/model.js";
+import type { PlannedComment, PublicationPlan } from "../../domain/deliberation/publicationPlanner.js";
 
 export interface RepositoryName {
   readonly owner: string;
@@ -124,11 +125,11 @@ export class GitHubSourceControl implements SourceControl {
           repo: snapshot.ref.repo,
           pull_number: snapshot.ref.number,
           commit_id: snapshot.headSha,
-          event: attempt.event,
+          event: REVIEW_EVENT[attempt.decision],
           body: attempt.body,
           comments: attempt.comments.map(toReviewComment),
         });
-        return { url: data.html_url, event: attempt.event, inlineComments: attempt.comments.length, simulated: false };
+        return { url: data.html_url, decision: attempt.decision, inlineComments: attempt.comments.length, simulated: false };
       } catch (error) {
         // 422: GitHub refused this shape (own pull request, or a line outside the diff). Try the next, safer shape.
         if (statusOf(error) !== 422) throw toGitHubError("publish the review", error);
@@ -209,10 +210,14 @@ function toSummary(ref: PullRequestRef, pr: PullRequestFields): PullRequestSumma
   };
 }
 
+/** GitHub's words for the council's decisions. */
+type ReviewEvent = "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
+const REVIEW_EVENT: Record<Decision, ReviewEvent> = { approve: "APPROVE", request_changes: "REQUEST_CHANGES", comment: "COMMENT" };
+
 interface Attempt {
-  readonly event: ReviewEvent;
+  readonly decision: Decision;
   readonly body: string;
-  readonly comments: readonly InlineComment[];
+  readonly comments: readonly PlannedComment[];
 }
 
 /**
@@ -221,23 +226,21 @@ interface Attempt {
  * the diff. Each attempt gives up a little structure but keeps all the content.
  */
 export function publicationAttempts(plan: PublicationPlan): Attempt[] {
-  const asComment = { ...plan, event: "COMMENT" as const, body: `**${verdictLabel(plan.event)}**\n\n${plan.body}` };
+  // The body's headline already states the decision, in the session's language.
+  const planned: Attempt = { decision: plan.decision, body: plan.body, comments: plan.comments };
+  const asComment: Attempt = { ...planned, decision: "comment" };
   const flattened = (attempt: Attempt): Attempt => ({
     ...attempt,
     comments: [],
     body: [attempt.body, ...attempt.comments.map((c) => `---\n\`${c.path}:${c.startLine ? `${c.startLine}-` : ""}${c.line}\`\n\n${c.body}`)].join("\n\n"),
   });
-  const attempts: Attempt[] = [plan];
-  if (plan.event !== "COMMENT") attempts.push(asComment);
-  if (plan.comments.length > 0) attempts.push(flattened(plan.event === "COMMENT" ? plan : asComment));
+  const attempts: Attempt[] = [planned];
+  if (plan.decision !== "comment") attempts.push(asComment);
+  if (plan.comments.length > 0) attempts.push(flattened(asComment));
   return attempts;
 }
 
-function verdictLabel(event: ReviewEvent): string {
-  return event === "APPROVE" ? "Council verdict: approve" : event === "REQUEST_CHANGES" ? "Council verdict: request changes" : "Council verdict: comment";
-}
-
-function toReviewComment(comment: InlineComment) {
+function toReviewComment(comment: PlannedComment) {
   return {
     path: comment.path,
     line: comment.line,

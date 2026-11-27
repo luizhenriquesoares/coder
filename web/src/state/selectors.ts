@@ -19,13 +19,6 @@ export function choiceFor(state: SessionState, kind: "finding" | "patch", id: st
   return state.decisions[decisionKey({ kind, id })]?.action ?? null;
 }
 
-/** Mirrors the publication rule: accepted by a human, or endorsed and not dismissed. */
-export function willPublish(state: SessionState, finding: Finding): boolean {
-  const choice = choiceFor(state, "finding", finding.id);
-  if (choice) return choice === "accept";
-  return levelOf(state, finding) === "endorsed";
-}
-
 /** Findings in the order a person should read them: what the council stands behind first, worst first. */
 export function findingsInReadingOrder(state: SessionState): Finding[] {
   const levelRank = (finding: Finding) => {

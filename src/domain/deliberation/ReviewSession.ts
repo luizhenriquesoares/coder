@@ -9,6 +9,7 @@ import {
   ROUNDS,
   type Category,
   type Consensus,
+  type Decision,
   type Engine,
   type Finding,
   type HumanDecision,
@@ -69,7 +70,8 @@ export interface PublicationRecord {
   readonly url: string;
   readonly inlineComments: number;
   readonly summaryFindings: number;
-  readonly event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
+  /** How the review was actually posted: `comment` when the source control refused the verdict. */
+  readonly decision: Decision;
   readonly simulated: boolean;
 }
 

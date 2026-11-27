@@ -17,6 +17,7 @@ import type { DomainEvent } from "../domain/deliberation/events.js";
 import type {
   Consensus,
   DeclinedFinding,
+  Decision,
   Engine,
   Finding,
   Language,
@@ -25,7 +26,7 @@ import type {
   Usage,
 } from "../domain/deliberation/model.js";
 import type { Persona } from "../domain/deliberation/personas.js";
-import type { PublicationPlan, ReviewEvent } from "../domain/deliberation/publicationPlanner.js";
+import type { PublicationPlan } from "../domain/deliberation/publicationPlanner.js";
 import type { FindingDraft, PatchDraft, PositionDraft } from "../domain/deliberation/ReviewSession.js";
 import type { Statement } from "../domain/deliberation/state.js";
 import type { VerdictDraft } from "../domain/deliberation/verdictPolicy.js";
@@ -52,7 +53,8 @@ export function summarize(snapshot: PullRequestSnapshot): PullRequestSummary {
 
 export interface PublishedReview {
   readonly url: string;
-  readonly event: ReviewEvent;
+  /** How the review was actually posted, which may be `comment` when the source refused the verdict. */
+  readonly decision: Decision;
   readonly inlineComments: number;
   readonly simulated: boolean;
 }

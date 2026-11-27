@@ -16,9 +16,9 @@ import {
   type Stance,
 } from "../src/domain/deliberation/model.js";
 import { applyPatches, applySnippetPatch, locateSnippet } from "../src/domain/deliberation/patching.js";
-import { planPublication } from "../src/domain/deliberation/publicationPlanner.js";
+import { planPublication, selectPublication } from "../src/domain/deliberation/publicationPlanner.js";
 import { MAX_FINDINGS_PER_REVIEWER, ReviewSession, type FindingDraft } from "../src/domain/deliberation/ReviewSession.js";
-import { foldEvents } from "../src/domain/deliberation/state.js";
+import { foldEvents, isPublished } from "../src/domain/deliberation/state.js";
 import { applyVerdictPolicy, boundDecision, fallbackVerdict, riskFloor } from "../src/domain/deliberation/verdictPolicy.js";
 
 const HEAD = ["export function total(items) {", "  let sum = 0;", "  for (const i of items) sum += i.price;", "  return sum;", "}"].join("\n");
@@ -388,7 +388,7 @@ describe("planPublication", () => {
 
   it("publishes endorsed findings: inline with a suggestion, or in the summary", () => {
     const plan = planPublication(concluded().state, changeSet);
-    expect(plan.event).toBe("REQUEST_CHANGES");
+    expect(plan).toMatchObject({ decision: "request_changes", councilDecision: "request_changes" });
     expect(plan.comments).toHaveLength(1);
     expect(plan.comments[0]).toMatchObject({ path: "src/total.ts", line: 3 });
     expect(plan.comments[0]!.body).toContain("```suggestion\n  for (const i of items) sum += i.price * i.quantity;\n```");
@@ -418,5 +418,31 @@ describe("planPublication", () => {
     const plan = planPublication({ ...session.state, language: "pt" }, changeSet);
     expect(plan.body).toContain("Pedir mudanças");
     expect(plan.comments[0]!.body).toContain("Recomendação");
+  });
+
+  it("returns the selection as data before rendering it", () => {
+    const state = concluded().state;
+    const selection = selectPublication(state, changeSet);
+    expect(selection.findings.map(({ finding, placement, patch }) => [finding.id, placement, patch?.id ?? null])).toEqual([
+      ["F-1", "inline", "P-1"],
+      ["F-2", "summary", null],
+    ]);
+    expect(selection).toMatchObject({ suggestions: [], summaryPatches: [] });
+    expect(planPublication(state, changeSet).comments[0]).toMatchObject({ findingId: "F-1", patchId: "P-1" });
+    expect(isPublished(state, state.findings[0]!)).toBe(true);
+    expect(isPublished(state, state.findings[2]!)).toBe(false);
+  });
+
+  it("publishes a finding whose line was not confirmed against the file in the summary, never inline", () => {
+    const session = concluded((s) => s.recordHumanDecision({ target: { kind: "finding", id: "F-3" }, action: "accept", by: "luiz" }));
+    const state = { ...session.state, findings: session.state.findings.map((f) => (f.id === "F-3" ? { ...f, location: { ...f.location, anchored: false } } : f)) };
+    const plan = planPublication(state, changeSet);
+    expect(plan.comments.map((c) => c.findingId)).toEqual(["F-1"]);
+    expect(plan.summaryFindings).toBe(2);
+    expect(plan.body).toContain("Rename i");
+  });
+
+  it("refuses to plan a publication before the verdict", () => {
+    expect(() => planPublication(debated("major", { architect: "agree" }).state, changeSet)).toThrow(DomainError);
   });
 });

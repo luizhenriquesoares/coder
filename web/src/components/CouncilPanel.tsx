@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { AppConfig, PullRequestDetail } from "../../../src/application/api.js";
-import type { ConsensusLevel, Decision, Engine, Language } from "../../../src/domain/deliberation/model.js";
+import type { ConsensusLevel, Engine, Language } from "../../../src/domain/deliberation/model.js";
 import { ROUNDS } from "../../../src/domain/deliberation/model.js";
 import { COUNCIL_ORDER } from "../../../src/domain/deliberation/personas.js";
 import type { PublicationPlan } from "../../../src/domain/deliberation/publicationPlanner.js";
@@ -215,7 +215,7 @@ function PublishBar({ t, session, plan, stale, canPublish, publishing, onPublish
           {t.reviewPublished}
         </p>
         <p className="publishbar__note">
-          {t.decision[publication.event.toLowerCase() as Decision]} · {publication.inlineComments} {t.inlineComments.toLowerCase()}
+          {t.decision[publication.decision]} · {publication.inlineComments} {t.inlineComments.toLowerCase()}
           {publication.simulated ? (
             <> · {t.simulated}</>
           ) : (
@@ -230,7 +230,7 @@ function PublishBar({ t, session, plan, stale, canPublish, publishing, onPublish
       </footer>
     );
   }
-  const suggestions = plan ? plan.comments.filter((comment) => comment.body.includes("```suggestion")).length : 0;
+  const suggestions = plan ? plan.comments.filter((comment) => comment.patchId !== undefined).length : 0;
   const blocked = stale ? t.staleSession : canPublish ? null : t.needsGitHubToken;
   return (
     <footer className="publishbar">
@@ -238,7 +238,7 @@ function PublishBar({ t, session, plan, stale, canPublish, publishing, onPublish
         <div className="publishbar__what">
           <p className="publishbar__title">{t.publishTitle}</p>
           <p className="publishbar__note">
-            {plan ? `${t.decision[plan.event.toLowerCase() as Decision]} · ${t.publishSummary(plan.comments.length, suggestions)}` : t.loading}
+            {plan ? `${t.decision[plan.decision]} · ${t.publishSummary(plan.comments.length, suggestions)}` : t.loading}
           </p>
         </div>
         <span className="publishbar__actions">
