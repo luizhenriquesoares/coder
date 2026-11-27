@@ -38,7 +38,7 @@ changed because of it, and what was left for later.
 | Reproduced with a script before the debate | all 10 findings of the Staff Engineer (S-6 at the rendering level only) |
 | Reported independently by two or three seats | 5 defects (A-2 and S-8; A-3 and S-7; A-4, S-5 and C-1; A-5 and S-9; A-6 and S-10) |
 | Verdict | **Request changes**, merge risk **high** |
-| Outcome | All 34 acted on in this pull request: 26 fixed as settled in the debate, 8 fixed with part of the proposed remedy deferred or declined for a stated reason. Tests went from 75 to 172 |
+| Outcome | All 34 acted on in this pull request: 26 fixed as settled in the debate, 8 fixed with part of the proposed remedy deferred or declined for a stated reason. Tests went from 75 to 173 |
 
 ## Opening statements
 
@@ -178,7 +178,7 @@ a comment.
 
 The Pragmatic Implementer took the endorsed findings in the order the debate
 asked for, one commit per package, each with the test that would have caught
-the defect. The suite went from 75 to 172 tests.
+the defect. The suite went from 75 to 173 tests.
 
 | # | What changed | Findings | Commit |
 |---|---|---|---|
@@ -203,6 +203,7 @@ the defect. The suite went from 75 to 172 tests.
 | 19 | Publishing is shown as a state that survives a reload, with its failure and a way to try again; a preview that fails says why | A-6, S-10, C-3 | `934d106` |
 | 20 | A session is never drawn over code it did not review; a lost live stream, each inbox error and closed pull requests are visible; the inbox stops polling while its tab is hidden | A-8, C-3, S-7 | `e8515ca`, `f377523`, `9e62eb8` |
 | 21 | The inbox shows how a review was published, not only what the council asked for. Found by the workspace implementer while testing item 18 | A-1 | `4b88f97` |
+| 22 | Each finding's card says what the human decided, and what was published once the review is out. Found while driving the finished demo | A-1 | `40e16d9` |
 
 Behaviour that changed on purpose, for anyone who used the first version:
 `GET /api/health` no longer needs the token; a decision is accepted only once
