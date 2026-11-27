@@ -2,10 +2,10 @@ import { useState, type FormEvent } from "react";
 import type { AppConfig, Inbox, InboxItem, PullRequestDetail } from "../../../src/application/api.js";
 import type { PullRequestRef } from "../../../src/domain/change/types.js";
 import type { Finding, Language } from "../../../src/domain/deliberation/model.js";
-import type { SessionState } from "../../../src/domain/deliberation/state.js";
+import { levelOf, type SessionState } from "../../../src/domain/deliberation/state.js";
 import { relativeTime } from "../state/format.js";
 import type { Strings } from "../state/i18n.js";
-import { directory, fileName, findingsInReadingOrder, findingsOfFile, levelOf, sameRef, worstSeverity } from "../state/selectors.js";
+import { directory, fileName, findingsInReadingOrder, findingsOfFile, locationLabel, sameRef, worstSeverity } from "../state/selectors.js";
 import type { SideView } from "./ActivityBar.js";
 import { DiffStat, EmptyState, Icon, LevelChip } from "./primitives.js";
 
@@ -198,7 +198,6 @@ function Findings({ t, session, selectedFindingId, onSelectFinding }: SidePanelP
             {findings.map((finding) => {
               const level = levelOf(session, finding);
               const active = finding.id === selectedFindingId;
-              const { path, line } = finding.location;
               return (
                 <li key={finding.id}>
                   <button
@@ -215,7 +214,7 @@ function Findings({ t, session, selectedFindingId, onSelectFinding }: SidePanelP
                       </span>
                       <span className="row-finding__meta">
                         <span className={`sev-text sev-text--${finding.severity}`}>{t.severity[finding.severity]}</span>
-                        <span>{path ? `${fileName(path)}${line ? `:${line}` : ""}` : t.changeWide}</span>
+                        <span>{locationLabel(finding, t.changeWide)}</span>
                         {level ? <LevelChip level={level} t={t} /> : null}
                       </span>
                     </span>

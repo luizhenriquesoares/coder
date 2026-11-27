@@ -4,9 +4,9 @@ import type { ConsensusLevel, Engine, Language } from "../../../src/domain/delib
 import { ROUNDS } from "../../../src/domain/deliberation/model.js";
 import { COUNCIL_ORDER } from "../../../src/domain/deliberation/personas.js";
 import type { PublicationPlan } from "../../../src/domain/deliberation/publicationPlanner.js";
-import type { SessionState } from "../../../src/domain/deliberation/state.js";
+import { levelOf, type SessionState } from "../../../src/domain/deliberation/state.js";
 import type { Strings } from "../state/i18n.js";
-import { consensusCounts, findingsInReadingOrder, levelOf, LEVEL_ORDER } from "../state/selectors.js";
+import { consensusCounts, findingsInReadingOrder, LEVEL_ORDER } from "../state/selectors.js";
 import { FindingCard, PatchCard, personaName, type CardContext } from "./cards.js";
 import { ConveneControl, engineLabel } from "./ConveneControl.js";
 import { Avatar, EmptyState, Icon } from "./primitives.js";

@@ -17,7 +17,7 @@ import { TitleBar } from "./components/TitleBar.js";
 import type { EditorTheme } from "./editor/monaco.js";
 import { STRINGS } from "./state/i18n.js";
 import { decisionsOpen } from "../../src/domain/deliberation/state.js";
-import { choiceFor, findingsInReadingOrder } from "./state/selectors.js";
+import { choiceFor, findingsInReadingOrder, stepThrough, toggleSelection } from "./state/selectors.js";
 import { useMediaQuery, useStoredFlag } from "./state/useUi.js";
 import { useWorkspace } from "./state/useWorkspace.js";
 
@@ -83,8 +83,9 @@ export function App({ workspace, language, onLanguageChange, theme, onToggleThem
 
   /** Selecting a finding takes the editor to it; selecting it again lets go of it. */
   const selectFinding = (id: string) => {
-    if (id === selectedFindingId) return setSelectedFindingId(null);
-    setSelectedFindingId(id);
+    const next = toggleSelection(selectedFindingId, id);
+    setSelectedFindingId(next);
+    if (!next) return;
     const path = session?.findings.find((finding) => finding.id === id)?.location.path;
     if (path) {
       setDiffMode("pr");
@@ -131,9 +132,7 @@ export function App({ workspace, language, onLanguageChange, theme, onToggleThem
 
   const reading = useMemo(() => (session ? findingsInReadingOrder(session) : []), [session]);
   const stepFinding = (step: 1 | -1) => {
-    if (reading.length === 0) return;
-    const index = reading.findIndex((finding) => finding.id === selectedFindingId);
-    const next = reading[index < 0 ? (step === 1 ? 0 : reading.length - 1) : (index + step + reading.length) % reading.length];
+    const next = stepThrough(reading, selectedFindingId, step);
     if (next) showInCode(next);
   };
 

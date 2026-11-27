@@ -6,7 +6,7 @@ import type { SessionState } from "../../../src/domain/deliberation/state.js";
 import { DiffView, type LineMarker } from "../editor/DiffView.js";
 import type { EditorTheme } from "../editor/monaco.js";
 import type { Strings } from "../state/i18n.js";
-import { choiceFor, directory, fileName, findingsOfFile, isInsideHunk, levelOf, previewablePatches } from "../state/selectors.js";
+import { directory, fileName, findingsOfFile, isInsideHunk, isSetAside, previewablePatches, stepThrough, toggleSelection } from "../state/selectors.js";
 import { loadFile } from "../state/useWorkspace.js";
 import { FindingCard, type CardContext } from "./cards.js";
 import { DiffStat, EmptyState, Icon } from "./primitives.js";
@@ -71,13 +71,12 @@ export function FileView(props: FileViewProps) {
     return findings.flatMap((finding) => {
       const { line } = finding.location;
       if (!line) return [];
-      const choice = choiceFor(session, "finding", finding.id);
       return {
         id: finding.id,
         line,
         severity: finding.severity,
         hover: `**${finding.id} · ${t.severity[finding.severity]}** — ${finding.title}`,
-        dimmed: choice === "dismiss" || (choice === null && levelOf(session, finding) === "rejected"),
+        dimmed: isSetAside(session, finding),
       };
     });
   }, [session, findings, patched, t]);
@@ -94,12 +93,10 @@ export function FileView(props: FileViewProps) {
   // A finding can sit on a line the diff folds away. Unfold while it is selected.
   const collapse = collapseUnchanged && (selectedLine === null || isInsideHunk(file, selectedLine));
   const step = (direction: 1 | -1) => {
-    if (findings.length === 0) return;
-    const index = findings.findIndex((finding) => finding.id === selectedFindingId);
-    const next = findings[index < 0 ? (direction === 1 ? 0 : findings.length - 1) : (index + direction + findings.length) % findings.length];
+    const next = stepThrough(findings, selectedFindingId, direction);
     if (next) props.onSelectFinding(next.id);
   };
-  const toggleMarker = (id: string) => props.onSelectFinding(id === selectedFindingId ? null : id);
+  const toggleMarker = (id: string) => props.onSelectFinding(toggleSelection(selectedFindingId, id));
 
   const card =
     selected && cards && !patched ? (

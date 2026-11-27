@@ -2225,11 +2225,12 @@
 .reviewevent {
   color: var(--accent);
   letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
-.reviewevent--APPROVE {
+.reviewevent--approve {
   color: var(--endorsed);
 }
-.reviewevent--REQUEST_CHANGES {
+.reviewevent--request_changes {
   color: var(--blocker);
 }
 

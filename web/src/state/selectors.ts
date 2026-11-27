@@ -2,9 +2,7 @@ import type { FileChange, PullRequestRef } from "../../../src/domain/change/type
 import type { ConsensusLevel, Finding, Patch, Severity } from "../../../src/domain/deliberation/model.js";
 import { decisionKey, levelOf, type SessionState } from "../../../src/domain/deliberation/state.js";
 
-export { levelOf };
-
-/** Pure views over the session state, shared by several panels. */
+/** Pure views over the session state, shared by several panels. The rules themselves live in the domain. */
 
 export const SEVERITY_RANK: Record<Severity, number> = { blocker: 0, major: 1, minor: 2, nit: 3 };
 export const LEVEL_ORDER: readonly ConsensusLevel[] = ["endorsed", "contested", "unreviewed", "rejected"];
@@ -17,6 +15,32 @@ export type HumanChoice = "accept" | "dismiss" | null;
 
 export function choiceFor(state: SessionState, kind: "finding" | "patch", id: string): HumanChoice {
   return state.decisions[decisionKey({ kind, id })]?.action ?? null;
+}
+
+/** Set aside: dismissed by the human, or rejected by the council with no human decision. Drawn dimmed. */
+export function isSetAside(state: SessionState, finding: Pick<Finding, "id">): boolean {
+  const choice = choiceFor(state, "finding", finding.id);
+  return choice === "dismiss" || (choice === null && levelOf(state, finding) === "rejected");
+}
+
+/** The next item after `currentId` in `direction`, wrapping around at both ends; from no current item, the first or the last. */
+export function stepThrough<T extends { readonly id: string }>(items: readonly T[], currentId: string | null, direction: 1 | -1): T | null {
+  if (items.length === 0) return null;
+  const index = items.findIndex((item) => item.id === currentId);
+  if (index < 0) return items[direction === 1 ? 0 : items.length - 1] ?? null;
+  return items[(index + direction + items.length) % items.length] ?? null;
+}
+
+/** Selecting what is already selected lets go of it. */
+export function toggleSelection(currentId: string | null, id: string): string | null {
+  return id === currentId ? null : id;
+}
+
+/** Where a finding is, as a person reads it: `file.ts:12`, `file.ts`, or the given words for the whole change. */
+export function locationLabel(finding: Pick<Finding, "location">, wholeChange: string): string {
+  const { path, line } = finding.location;
+  if (!path) return wholeChange;
+  return line ? `${fileName(path)}:${line}` : fileName(path);
 }
 
 /** Findings in the order a person should read them: what the council stands behind first, worst first. */

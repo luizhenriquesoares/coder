@@ -29,7 +29,7 @@ export interface WorkspaceModel {
   readonly notice: string | null;
 }
 
-type Action =
+export type WorkspaceAction =
   | { type: "loaded"; config: AppConfig; inbox: Inbox }
   | { type: "loadFailed"; message: string; needsToken: boolean }
   | { type: "inbox"; inbox: Inbox }
@@ -42,7 +42,7 @@ type Action =
   | { type: "busy"; busy: WorkspaceModel["busy"] }
   | { type: "notice"; notice: string | null };
 
-const INITIAL: WorkspaceModel = {
+export const INITIAL_MODEL: WorkspaceModel = {
   config: null,
   inbox: null,
   loadError: null,
@@ -58,7 +58,8 @@ const INITIAL: WorkspaceModel = {
   notice: null,
 };
 
-function reduce(model: WorkspaceModel, action: Action): WorkspaceModel {
+/** The pure state transition of the workspace. Exported for its tests. */
+export function reduceWorkspace(model: WorkspaceModel, action: WorkspaceAction): WorkspaceModel {
   switch (action.type) {
     case "loaded":
       return { ...model, config: action.config, inbox: action.inbox, loadError: null, needsToken: false };
@@ -115,7 +116,7 @@ export interface WorkspaceActions {
  * browser by folding the same events the server folds.
  */
 export function useWorkspace(api: CoderApi, language: Language): [WorkspaceModel, WorkspaceActions] {
-  const [model, dispatch] = useReducer(reduce, INITIAL);
+  const [model, dispatch] = useReducer(reduceWorkspace, INITIAL_MODEL);
   const latest = useRef(model);
   latest.current = model;
 

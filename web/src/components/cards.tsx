@@ -1,9 +1,8 @@
 import type { Finding, Language, Patch, Position, ReviewerId } from "../../../src/domain/deliberation/model.js";
 import { PERSONAS } from "../../../src/domain/deliberation/personas.js";
-import type { SessionState } from "../../../src/domain/deliberation/state.js";
+import { isPublished, levelOf, type SessionState } from "../../../src/domain/deliberation/state.js";
 import type { Strings } from "../state/i18n.js";
-import { isPublished } from "../../../src/domain/deliberation/state.js";
-import { choiceFor, fileName, levelOf, patchesFixing, type HumanChoice } from "../state/selectors.js";
+import { choiceFor, fileName, isSetAside, locationLabel, patchesFixing, type HumanChoice } from "../state/selectors.js";
 import { Avatar, Icon, LevelChip, RiskChip, SeverityMark } from "./primitives.js";
 
 export interface CardContext {
@@ -20,12 +19,6 @@ export interface CardContext {
 
 export function personaName(reviewer: ReviewerId, language: Language): string {
   return PERSONAS[reviewer].name[language];
-}
-
-function locationLabel(finding: Finding, t: Strings): string {
-  const { path, line } = finding.location;
-  if (!path) return t.changeWide;
-  return line ? `${fileName(path)}:${line}` : fileName(path);
 }
 
 function DecisionButtons({ choice, disabled, t, onChoose }: { choice: HumanChoice; disabled: boolean; t: Strings; onChoose(action: "accept" | "dismiss"): void }) {
@@ -71,7 +64,7 @@ export function FindingCard({ finding, expanded, variant = "list", ...context }:
   const positions = state.positions.filter((position) => position.findingId === finding.id);
   const patches = patchesFixing(state, finding.id);
   const settled = level !== null;
-  const muted = choice === "dismiss" || (choice === null && level === "rejected");
+  const muted = isSetAside(state, finding);
 
   return (
     <article
@@ -91,7 +84,7 @@ export function FindingCard({ finding, expanded, variant = "list", ...context }:
         {level ? <LevelChip level={level} t={t} {...(consensus ? { tally: `${consensus.support.length}–${consensus.opposition.length}` } : {})} /> : null}
         {variant === "list" ? (
           <button type="button" className="link finding__where" disabled={!finding.location.path} onClick={() => context.onShowInCode(finding)}>
-            {locationLabel(finding, t)}
+            {locationLabel(finding, t.changeWide)}
           </button>
         ) : null}
       </div>

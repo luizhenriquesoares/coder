@@ -62,7 +62,7 @@ function describe(event: DomainEvent, t: Strings, language: Language): string {
     case "PublicationFailed":
       return event.payload.reason;
     case "ReviewPublished":
-      return `${event.payload.decision.toUpperCase()} · ${event.payload.inlineComments} ${t.inlineComments.toLowerCase()}${event.payload.simulated ? ` · ${t.simulated}` : ""}`;
+      return `${t.decision[event.payload.decision]} · ${event.payload.inlineComments} ${t.inlineComments.toLowerCase()}${event.payload.simulated ? ` · ${t.simulated}` : ""}`;
   }
 }
 
@@ -91,7 +91,7 @@ function Publication({ plan, t }: { plan: PublicationPlan | null; t: Strings }) 
     <div className="publication">
       <section className="publication__part">
         <h3 className="finding__label">
-          {t.reviewBody} · <span className={`reviewevent reviewevent--${plan.decision.toUpperCase()}`}>{plan.decision.toUpperCase()}</span>
+          {t.reviewBody} · <span className={`reviewevent reviewevent--${plan.decision}`}>{t.decision[plan.decision]}</span>
         </h3>
         <pre className="publication__text">{plan.body}</pre>
       </section>
