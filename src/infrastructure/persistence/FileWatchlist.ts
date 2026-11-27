@@ -22,6 +22,15 @@ export class FileWatchlist extends InMemoryWatchlist {
 
   override async add(ref: PullRequestRef): Promise<void> {
     await super.add(ref);
+    await this.write();
+  }
+
+  override async remove(ref: PullRequestRef): Promise<void> {
+    await super.remove(ref);
+    await this.write();
+  }
+
+  private async write(): Promise<void> {
     await mkdir(dirname(this.file), { recursive: true });
     await writeFile(this.file, JSON.stringify([...this.refs.values()], null, 2), "utf8");
   }

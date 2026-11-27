@@ -17,6 +17,9 @@ export interface FakePullRequest {
   readonly body: string | null;
   readonly author: string;
   readonly draft?: boolean;
+  /** Defaults to open. Only open pull requests are listed. */
+  state?: "open" | "closed" | "merged";
+  updatedAt?: string;
   headSha: string;
   readonly baseTipSha: string;
   readonly mergeBaseSha: string;
@@ -51,7 +54,7 @@ export interface ReviewBody {
   readonly comments: { path: string; line: number; side: string; start_line?: number; start_side?: string; body: string }[];
 }
 
-const PAGE_SIZE = 2; // small on purpose: listing files must follow pagination
+const PAGE_SIZE = 2; // small on purpose: listing files and pull requests must follow pagination
 
 /** A local stand-in for the parts of GitHub's REST API the adapter uses, for one repository. */
 export async function startFakeGitHub(owner: string, repo: string, pullRequests: FakePullRequest[]): Promise<FakeGitHub> {
@@ -64,11 +67,11 @@ export async function startFakeGitHub(owner: string, repo: string, pullRequests:
     title: pr.title,
     body: pr.body,
     html_url: `https://github.com/${owner}/${repo}/pull/${pr.number}`,
-    state: "open",
+    state: pr.state === "merged" ? "closed" : (pr.state ?? "open"),
     draft: pr.draft ?? false,
-    merged_at: null,
+    merged_at: pr.state === "merged" ? (pr.updatedAt ?? "2026-11-21T12:00:00Z") : null,
     created_at: "2026-11-20T10:00:00Z",
-    updated_at: "2026-11-21T12:00:00Z",
+    updated_at: pr.updatedAt ?? "2026-11-21T12:00:00Z",
     user: { login: pr.author, avatar_url: `${baseUrl}/avatars/${pr.author}` },
     base: { ref: "main", sha: pr.baseTipSha },
     head: { ref: `feature/${pr.number}`, sha: pr.headSha },
@@ -125,20 +128,22 @@ export async function startFakeGitHub(owner: string, repo: string, pullRequests:
       if (!path.startsWith(root)) return notFound();
       const rest = path.slice(root.length);
 
-      if (req.method === "GET" && rest === "/pulls") return json(200, pullRequests.map((pr) => describe(pr, fake.baseUrl)));
+      const page = (items: readonly unknown[], path: string) => {
+        const number = Number(query.page ?? 1);
+        const hasNext = number * PAGE_SIZE < items.length;
+        const next = `${fake.baseUrl}${root}${path}?per_page=${query.per_page}&page=${number + 1}`;
+        return json(200, items.slice((number - 1) * PAGE_SIZE, number * PAGE_SIZE), hasNext ? { link: `<${next}>; rel="next"` } : {});
+      };
+      if (req.method === "GET" && rest === "/pulls") {
+        return page(pullRequests.filter((pr) => (pr.state ?? "open") === "open").map((pr) => describe(pr, fake.baseUrl)), "/pulls");
+      }
 
       const pull = /^\/pulls\/(\d+)(\/files|\/reviews)?$/.exec(rest);
       if (pull) {
         const pr = pullRequests.find((candidate) => candidate.number === Number(pull[1]));
         if (!pr) return notFound();
         if (req.method === "GET" && !pull[2]) return json(200, describe(pr, fake.baseUrl));
-        if (req.method === "GET" && pull[2] === "/files") {
-          const page = Number(query.page ?? 1);
-          const slice = pr.files.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(describeFile);
-          const hasNext = page * PAGE_SIZE < pr.files.length;
-          const next = `${fake.baseUrl}${root}/pulls/${pr.number}/files?per_page=${query.per_page}&page=${page + 1}`;
-          return json(200, slice, hasNext ? { link: `<${next}>; rel="next"` } : {});
-        }
+        if (req.method === "GET" && pull[2] === "/files") return page(pr.files.map(describeFile), `/pulls/${pr.number}/files`);
         if (req.method === "POST" && pull[2] === "/reviews") {
           const review = body as ReviewBody;
           reviewAttempts.push(review);

@@ -50,26 +50,32 @@ const STATUS: Record<string, FileStatus> = {
  */
 export class GitHubSourceControl implements SourceControl {
   readonly provider = "github" as const;
+  /** GitHub allows 5000 requests an hour with a token and 60 without one. */
+  readonly refreshIntervalMs: number;
 
-  constructor(private readonly options: GitHubSourceControlOptions) {}
+  constructor(private readonly options: GitHubSourceControlOptions) {
+    this.refreshIntervalMs = options.authenticated ? 60_000 : 10 * 60_000;
+  }
 
   async listOpenPullRequests(): Promise<PullRequestSummary[]> {
     const perRepository = await Promise.all(
       this.options.repositories.map(({ owner, repo }) =>
         this.call(`list pull requests of ${owner}/${repo}`, async () => {
-          const { data } = await this.options.octokit.rest.pulls.list({
-            owner,
-            repo,
-            state: "open",
-            sort: "updated",
-            direction: "desc",
-            per_page: 30,
-          });
+          const { octokit } = this.options;
+          const data = await octokit.paginate(octokit.rest.pulls.list, { owner, repo, state: "open", sort: "updated", direction: "desc", per_page: 100 });
           return data.map((pr) => toSummary({ provider: "github", owner, repo, number: pr.number }, pr));
         }),
       ),
     );
     return perRepository.flat();
+  }
+
+  async getSummary(ref: PullRequestRef): Promise<PullRequestSummary> {
+    const { owner, repo } = ref;
+    return this.call(`read ${owner}/${repo}#${ref.number}`, async () => {
+      const { data } = await this.options.octokit.rest.pulls.get({ owner, repo, pull_number: ref.number });
+      return toSummary(ref, data);
+    });
   }
 
   async getSnapshot(ref: PullRequestRef): Promise<PullRequestSnapshot> {

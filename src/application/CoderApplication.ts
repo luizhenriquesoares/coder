@@ -18,7 +18,6 @@ import type {
 import type { ConductReview } from "./ConductReview.js";
 import { ApplicationError, describeError } from "./errors.js";
 import {
-  summarize,
   type EventBus,
   type EventStore,
   type PublishedReview,
@@ -42,6 +41,8 @@ export interface CoderApplicationDeps {
 }
 
 const GITHUB_PR_URL = /^https?:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)/i;
+/** A watched pull request stays in the inbox this long after it was closed or merged. */
+const CLOSED_WATCH_RETENTION_MS = 3 * 24 * 60 * 60_000;
 const SHORT_PR_REF = /^([\w.-]+)\/([\w.-]+)#(\d+)$/;
 
 /** Application service implementing the API for every delivery mechanism. */
@@ -57,12 +58,19 @@ export class CoderApplication implements CoderApi {
     const [listing, watched, states] = await Promise.all([catalog.listOpen(), watchlist.all(), sessions.allStates()]);
 
     const known = new Set(listing.items.map((item) => refKey(item.ref)));
-    const extra = await Promise.all(
-      watched
-        .filter((ref) => !known.has(refKey(ref)))
-        .map((ref) => catalog.snapshot(ref).then(summarize, () => null)),
-    );
-    const pullRequests = [...listing.items, ...extra.filter((s): s is PullRequestSummary => s !== null)];
+    const errors = [...listing.errors];
+    const extra: PullRequestSummary[] = [];
+    const readings = await Promise.all(watched.filter((ref) => !known.has(refKey(ref))).map(async (ref) => ({ ref, ...(await catalog.summary(ref)) })));
+    for (const { ref, summary, error } of readings) {
+      if (error) errors.push({ provider: ref.provider, message: error });
+      if (!summary) continue;
+      if (summary.state !== "open" && catalog.now() - Date.parse(summary.updatedAt) > CLOSED_WATCH_RETENTION_MS) {
+        await watchlist.remove(ref); // closed or merged long enough ago: stop following it
+        continue;
+      }
+      extra.push(summary);
+    }
+    const pullRequests = [...listing.items, ...extra];
 
     const items = pullRequests
       .map((pullRequest): InboxItem => {
@@ -74,7 +82,7 @@ export class CoderApplication implements CoderApi {
         };
       })
       .sort((a, b) => b.pullRequest.updatedAt.localeCompare(a.pullRequest.updatedAt));
-    return { items, errors: listing.errors };
+    return { items, errors };
   }
 
   async importPullRequest(url: string): Promise<PullRequestRef> {

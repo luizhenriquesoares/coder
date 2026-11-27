@@ -11,4 +11,8 @@ export class InMemoryWatchlist implements Watchlist {
   async add(ref: PullRequestRef): Promise<void> {
     this.refs.set(refKey(ref), ref);
   }
+
+  async remove(ref: PullRequestRef): Promise<void> {
+    this.refs.delete(refKey(ref));
+  }
 }

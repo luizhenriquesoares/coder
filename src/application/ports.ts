@@ -61,7 +61,11 @@ export interface PublishedReview {
 
 export interface SourceControl {
   readonly provider: Provider;
+  /** How often the inbox may read this source again, in milliseconds (0: whenever asked). */
+  readonly refreshIntervalMs: number;
   listOpenPullRequests(): Promise<PullRequestSummary[]>;
+  /** One pull request's summary, at the cost of one request. */
+  getSummary(ref: PullRequestRef): Promise<PullRequestSummary>;
   getSnapshot(ref: PullRequestRef): Promise<PullRequestSnapshot>;
   getFileContents(snapshot: PullRequestSnapshot, path: string): Promise<FileContents>;
   publishReview(snapshot: PullRequestSnapshot, plan: PublicationPlan): Promise<PublishedReview>;
@@ -151,6 +155,7 @@ export interface EventStore {
 export interface Watchlist {
   all(): Promise<PullRequestRef[]>;
   add(ref: PullRequestRef): Promise<void>;
+  remove(ref: PullRequestRef): Promise<void>;
 }
 
 export type Unsubscribe = () => void;

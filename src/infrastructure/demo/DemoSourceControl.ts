@@ -13,6 +13,7 @@ import type { DemoFile, DemoPullRequest } from "./types.js";
  */
 export class DemoSourceControl implements SourceControl {
   readonly provider = "demo" as const;
+  readonly refreshIntervalMs = 0; // nothing to save: the fixtures are in memory
   private readonly startedAt: number;
 
   constructor(
@@ -24,6 +25,10 @@ export class DemoSourceControl implements SourceControl {
 
   async listOpenPullRequests(): Promise<PullRequestSummary[]> {
     return this.pullRequests.map((pr) => summarize(this.toSnapshot(pr)));
+  }
+
+  async getSummary(ref: PullRequestRef): Promise<PullRequestSummary> {
+    return summarize(this.toSnapshot(this.find(ref)));
   }
 
   async getSnapshot(ref: PullRequestRef): Promise<PullRequestSnapshot> {

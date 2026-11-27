@@ -87,6 +87,21 @@ describe("GitHub adapter against the REST API", () => {
     ]);
   });
 
+  it("lists every page of open pull requests, and reads one summary with one request", async () => {
+    github = await startFakeGitHub("acme", "shop", [7, 8, 9, 10, 11].map((number) => ({ ...pullRequest(), number, state: number === 10 ? "merged" : "open" })));
+    const octokit = new Octokit({ baseUrl: github.baseUrl, auth: "ghp_test", log: { debug() {}, info() {}, warn() {}, error() {} } });
+    const source = new GitHubSourceControl({ octokit, repositories: [{ owner: "acme", repo: "shop" }], authenticated: true });
+
+    expect((await source.listOpenPullRequests()).map((summary) => summary.ref.number)).toEqual([7, 8, 9, 11]);
+    expect(github.calls.filter((call) => call.path === "/repos/acme/shop/pulls")).toHaveLength(2);
+    expect(github.calls[0]!.query).toMatchObject({ per_page: "100", state: "open" });
+
+    github.calls.length = 0;
+    expect(await source.getSummary({ ...ref, number: 10 })).toMatchObject({ ref: { number: 10 }, state: "merged", headSha: "head-1" });
+    expect(github.calls.map((call) => call.path)).toEqual(["/repos/acme/shop/pulls/10"]);
+    expect(source.refreshIntervalMs).toBe(60_000);
+  });
+
   it("reads a snapshot: every page of files, and the merge base rather than the base tip", async () => {
     const { source, github } = await connect();
     const snapshot = await source.getSnapshot(ref);
