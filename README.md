@@ -90,20 +90,28 @@ cp .env.example .env
 Then `npm run build && npm start`.
 
 - **One pull request, right now.** Paste its URL in the box above the inbox.
-  Public pull requests can be read without a GitHub token.
+  Public pull requests can be read without a GitHub token, within GitHub's
+  limit of 60 requests an hour: without a token the inbox re-reads GitHub
+  every ten minutes, with one every minute.
 - **A whole repository.** List it in `GITHUB_REPOSITORIES`.
 - **Automatically.** With `AUTO_REVIEW=true` CodeR polls the listed
   repositories. Pull requests that were already open when it started are the
   baseline and are not reviewed, so switching it on never triggers a burst of
-  paid reviews. Instead of polling you can point a GitHub webhook (event *Pull
-  requests*, content type `application/json`) at `POST /api/webhooks/github`
-  and set `GITHUB_WEBHOOK_SECRET`.
+  paid reviews. A commit is reviewed once: CodeR asks its stored sessions, so
+  a restart or a redelivered webhook does not pay twice, and a commit whose
+  review failed twice is left alone. Pull requests that changed while CodeR
+  was not running are not reviewed automatically. Instead of polling you can
+  point a GitHub webhook (event *Pull requests*, content type
+  `application/json`) at `POST /api/webhooks/github` and set
+  `GITHUB_WEBHOOK_SECRET`.
 
 **Cost.** A session is ten model calls: four opening statements, four debate
 statements, the implementer and the moderator. The pull request is sent once
 and the other nine calls read it from the prompt cache. The status bar shows
 the tokens and the estimated cost of each session. `CODER_MODEL` and
-`CODER_EFFORT` are the two dials.
+`CODER_EFFORT` are the two dials. At most four councils deliberate at once,
+and a reviewer that does not answer within fifteen minutes is recorded as
+failed while the others go on.
 
 ## How a review works
 
@@ -121,20 +129,28 @@ outweighs opposition by two or more, *rejected* when opposition is larger,
 *contested* in between, and *unreviewed* if nobody else spoke.
 
 **The verdict is bounded by consensus.** The council cannot approve while an
-endorsed blocker exists, and the merge risk is never lower than what the
-endorsed findings imply. When the policy overrides the moderator, the review
-says so.
+endorsed blocker exists, cannot request changes without an endorsed blocker
+or major finding to ground it, and the merge risk is never lower than what
+the endorsed findings imply. When the policy overrides the moderator, the
+review says so.
 
-**You decide.** Accept or dismiss any finding or patch. Your decision always
-wins over the council's.
+**You decide.** Once the council has concluded, accept or dismiss any finding
+or patch. Your decision always wins over the council's, and that includes the
+outcome: accept a blocker the council had left contested and an approval is
+published as a request for changes; dismiss everything that grounded a
+request for changes and it is published as a comment. The publish bar tells
+you which, before you press the button.
 
 **What gets published.** A finding is published when you accepted it, or when
 the council endorsed it and you did not dismiss it. It becomes an inline
-comment when its line is part of the diff, otherwise it goes into the review
-summary. A patch becomes a GitHub suggestion the author can commit with one
-click. A session is published once, and only against the commit it reviewed:
-if the pull request has new commits, CodeR refuses and asks you to convene the
-council again.
+comment when its line is part of the diff and was confirmed in the file,
+otherwise it goes into the review summary. A patch becomes a GitHub
+suggestion the author can commit with one click, made of exactly the lines
+you previewed. A session is published once, and only against the commit it
+reviewed: if the pull request has new commits, CodeR refuses and asks you to
+convene the council again. If the server stops in the middle of publishing,
+CodeR records that the outcome is unknown and asks you to look at the pull
+request before publishing again.
 
 ## The workspace
 
@@ -161,31 +177,44 @@ council again.
 
 ## Security notes
 
-- The server listens on `127.0.0.1` only. To expose it, set `HOST=0.0.0.0`
-  **and** `CODER_API_TOKEN`: every API call must then carry
-  `Authorization: Bearer <token>`.
+- The server listens on `127.0.0.1`, and without a token it only answers
+  requests made on that machine: a request with a foreign `Host` or `Origin`
+  is refused, so a web page open in your browser cannot reach the API.
+- To expose it, set `HOST` **and** `CODER_API_TOKEN`; the server refuses to
+  start on any other address without a token. Every API call must then carry
+  `Authorization: Bearer <token>`. Only `GET /api/health` and the signed
+  webhook are outside that rule.
 - Webhooks are accepted only when `GITHUB_WEBHOOK_SECRET` is set, and their
-  signature is verified.
-- Pull request titles, descriptions and file contents are presented to the
-  models as material to review, not as instructions. Treat the output as a
-  review to read, which is why nothing is published without a person pressing
-  the button, except what you opt into with `AUTO_REVIEW` (which reviews, and
-  still does not publish).
+  signature is verified over the raw bytes.
+- Pull request titles, descriptions and file contents are written by the pull
+  request's author. They are given to the models as material to review, in
+  the user turn and inside a boundary the author cannot forge, never as
+  instructions. Text the models write cannot mention people or link issues
+  when it is published. Treat the output as a review to read, which is why
+  nothing is published without a person pressing the button, except what you
+  opt into with `AUTO_REVIEW` (which reviews, and still does not publish).
 - Keys live in `.env` on your machine. They are never sent to the browser.
+- Session logs are files under `CODER_DATA_DIR`. A file that was damaged is
+  set aside as `<name>.corrupt` and reported at start-up; it is never read as
+  a shorter history.
 
 ## What is verified, and what is not
 
 | | |
 |---|---|
+| The whole codebase | Reviewed by the council itself before the first release: 34 findings, all endorsed. See [docs/COUNCIL_REVIEW.md](docs/COUNCIL_REVIEW.md) for what was fixed and what was deferred |
 | Domain rules, protocol, consensus, verdict policy, patching, publication planning | Unit tests |
-| Demo council end to end, in English and Portuguese | Tests, plus the browser at desktop, wide and phone sizes |
-| Server over HTTP with live event streaming, restart, API token, webhooks, import by URL | Tests against a running server |
+| Demo council end to end, in English and Portuguese | Tests, plus the browser at desktop, wide and phone sizes, in both themes |
+| The workspace | Its rules and its reducer are unit tested; the screens were driven in a browser (convene, decide, preview, publish, a stale pull request, a lost connection). The React components have no automated tests yet |
+| Server over HTTP with live event streaming, the access guards, restart recovery, webhooks, import by URL | Tests against a running server, through the same HTTP client the workspace uses |
+| Event log, inbox caching, automatic review | Tests for a failed write, a torn file, a rate-limited listing, a restart |
+| Every push | GitHub Actions runs the type check, the tests and both builds |
 | Claude council | Tests drive the official SDK against a local server that speaks the Messages API streaming wire format: request shape, prompt caching order, model fallback, refusals, truncation, a rejected key |
 | GitHub adapter | Tests drive Octokit against a local server that speaks the REST API: pagination, merge base, file contents, publishing, and GitHub refusing a review |
 | **The real Anthropic and GitHub APIs** | **Not exercised yet.** This build was made in an environment without credentials. Expect to adjust details the first time you run it with real keys. |
 
 ```bash
-npm test          # 75 tests
+npm test          # 172 tests
 npm run typecheck
 ```
 
@@ -222,6 +251,9 @@ Read next:
 - Learn from human decisions: what a team dismisses tunes its council.
 - Team-specific seats and policies ("our architecture rules").
 - Re-review on new commits: resolved versus still open.
+- Link findings that describe the same defect, so independent discovery by
+  several reviewers counts as the evidence it is.
+- A sandbox where a reviewer can run the change and attach a reproduction.
 - GitLab, Azure DevOps and Bitbucket adapters.
 - A database-backed event store, sign-in and multi-tenant operation.
 
@@ -245,3 +277,7 @@ Para usar com PRs de verdade, copie `.env.example` para `.env` e preencha
 `ANTHROPIC_API_KEY`, `GITHUB_TOKEN` e `GITHUB_REPOSITORIES`. As chaves ficam
 só nesse arquivo, na sua máquina. A interface tem português: use o seletor
 EN/PT no topo.
+
+O próprio conselho revisou este código antes da primeira versão: 34 achados,
+todos endossados, corrigidos ou adiados com justificativa. O registro está em
+[docs/COUNCIL_REVIEW.md](docs/COUNCIL_REVIEW.md).

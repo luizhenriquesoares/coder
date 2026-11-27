@@ -2,7 +2,8 @@
 
 The domain model in [DOMAIN.md](DOMAIN.md) came first. This document describes
 how the code realises it, and the decisions that are not obvious from reading
-one file.
+one file. The council reviewed this code before its first release; what it
+found and what changed is in [COUNCIL_REVIEW.md](COUNCIL_REVIEW.md).
 
 ## 1. The shape
 
@@ -15,7 +16,7 @@ one file.
                                          ▼                              ▼ (standalone demo)
 ┌─ infrastructure/http ─┐      ┌──────────────────────── application ─────────────────────────┐
 │ Fastify routes, SSE,  │ ───▶ │  CoderApi  (the one interface every delivery mechanism uses) │
-│ webhook, auth         │      │  CoderApplication · ConductReview · AutoReview               │
+│ webhook, access guard │      │  CoderApplication · ConductReview · AutoReview               │
 └───────────────────────┘      │  PullRequestCatalog · SessionRepository                      │
                                │  ports.ts: SourceControl · CouncilAgents · EventStore ·      │
                                │            EventBus · Watchlist · Logger                     │
@@ -58,7 +59,7 @@ before conclusion, one publication) and records what happened as events.
 ReviewSessionConvened → RoundStarted → ReviewerStartedThinking → StatementMade
   → FindingRaised* → PositionTaken* → ConsensusComputed → PatchProposed* / FindingDeclined*
   → VerdictIssued → ReviewSessionConcluded | ReviewSessionFailed
-  → HumanDecisionRecorded* → ReviewPublished
+  → HumanDecisionRecorded* → PublicationStarted → ReviewPublished | PublicationFailed
 ```
 
 State is never stored. `foldEvents` in `domain/deliberation/state.ts` rebuilds
@@ -83,6 +84,8 @@ data rather than an added mechanism.
 each live session and serialises its saves, so the council writing while it
 deliberates and a human deciding at the same moment append to one ordered
 stream. Events are appended to the store first and published to the bus after.
+An append that fails is kept and written again by the next save, so a stream
+never has a hole in it.
 
 ## 3. The protocol as a use case
 
@@ -101,14 +104,32 @@ Things that are deliberate:
 
 - **Deterministic rules are in the domain, not in a prompt.** Consensus is
   `computeConsensus`, a pure function over positions. The verdict the
-  moderator proposes passes through `applyVerdictPolicy`, which refuses an
-  approval over an endorsed blocker and raises the merge risk to what the
-  endorsed findings imply. A model can be wrong or be talked into something;
-  these two rules cannot.
+  moderator proposes passes through `applyVerdictPolicy`, which bounds it by
+  the endorsed findings: no approval over an endorsed blocker, no request for
+  changes without an endorsed blocker or major, and a merge risk never lower
+  than those findings imply. A model can be wrong or be talked into
+  something; these rules cannot.
+- **The human's decisions reach what is published.** The same bound
+  (`boundDecision`, `riskFloor`) is applied once more when the review is
+  planned, this time to the findings that will really be published. Accepting
+  a contested blocker on an approved change publishes a request for changes;
+  dismissing the only grounds of one publishes a comment; when no human
+  decided anything, the published decision is the verdict by construction.
 - **A reviewer may fail without failing the review.** A refused, truncated or
-  malformed answer is recorded as `ReviewerFailed` and the round goes on. Only
-  an opening round where nobody spoke fails the session. If the moderator
-  fails, the verdict is derived from consensus alone (`fallbackVerdict`).
+  malformed answer, or one that does not arrive within fifteen minutes, is
+  recorded as `ReviewerFailed` and the round goes on. Only an opening round
+  where nobody spoke fails the session. If the moderator fails, the verdict is
+  derived from consensus alone (`fallbackVerdict`), and it never approves
+  while a finding is endorsed, contested or unreviewed.
+- **Our own defects are not the reviewer's.** Only the call to the model is
+  treated as a reviewer's failure. An error while recording an answer lets
+  the round settle, so nothing that was paid for is dropped from the record,
+  and then fails the session with its real reason.
+- **Nothing stays in mid-air.** At start-up every stored session that is
+  still in progress is failed with a message that says so, and so is a
+  publication whose outcome was never recorded. On SIGINT or SIGTERM the
+  running sessions are failed and saved before the process exits. At most
+  four councils deliberate at once, and one per commit.
 - **One malformed item does not sink a contribution.** Each finding, position
   and patch is validated by the aggregate on its own; an invalid one is
   dropped and logged.
@@ -116,17 +137,22 @@ Things that are deliberate:
   carries a quote of the line. `codeAnchoring` places the finding where that
   quote actually is in the head version, nearest to the claimed line, so a
   model that miscounts lines does not put a comment in the wrong place. A
-  patch is marked applicable only when its original text exists in the file.
+  finding whose line could not be confirmed is published in the summary, not
+  on a line. A patch is placed at the occurrence of its original text nearest
+  the findings it fixes, and is recorded as not applicable when that text is
+  missing or the choice is ambiguous. The lines that replace the range are
+  computed once, and both the preview and the published suggestion are made
+  from them.
 
 ## 4. The model gateway
 
 `ClaudeCouncil` implements the `CouncilAgents` port with the official
 `@anthropic-ai/sdk`.
 
-- **One cached prefix per pull request.** Every call sends the same first
-  system block: the council's rules and the whole pull request (description,
-  diffs, head versions of the files, riskiest first, within a character
-  budget). It is marked for the prompt cache. The persona and the task come
+- **One cached prefix per pull request.** The system prompt carries only the
+  council's rules. The whole pull request (description, diffs, head versions
+  of the files, riskiest first, within a character budget) is the first block
+  of the user turn, marked for the prompt cache. The seat and the task come
   after it, so ten calls pay for the pull request once. A small gate makes the
   first call for a pull request write the cache entry before the calls that
   arrive at the same moment read it.
@@ -138,10 +164,18 @@ Things that are deliberate:
 - **Failure is translated.** A rejected key, a missing model, a rate limit, a
   refusal and a truncated answer each become a `CouncilAgentError` with a
   message a person can act on.
-- **Untrusted input.** The pull request is material to review. The rules say
-  so explicitly, the output is constrained to a schema, and nothing is
-  published without a human, so the worst a hostile pull request can do is
-  produce a bad review that a person reads.
+- **Untrusted input.** The pull request is written by its author, so it never
+  travels in the instruction channel. It sits in the user turn inside a
+  boundary derived for each commit by HMAC under a key made at start-up,
+  which the author can neither guess nor close; the title, the description,
+  branch names and paths are escaped. The rules say that everything inside
+  the boundary is material to review, never instructions. The output is
+  constrained to a schema, prose that gets published cannot notify people or
+  link issues (`@name` and `#123` are wrapped in code spans), and nothing is
+  published without a human.
+- **A deadline per call.** The protocol gives every reviewer call an abort
+  signal that fires after fifteen minutes; the adapter passes it to the SDK,
+  and the protocol stops waiting even if an engine ignores it.
 
 `ScriptedCouncil` implements the same port from fixtures, with a `Pace` that
 decides how long each reviewer "thinks". It is what the demo and most tests
@@ -157,13 +191,28 @@ Enterprise Server).
 - Files are read at an exact commit. A blob at a sha never changes, so
   `PullRequestCatalog` caches it without expiry; snapshots are cached for
   twenty seconds.
+- **The inbox costs GitHub what changed, not who is watching.** Listings
+  (paginated) and one-call summaries of followed pull requests are cached per
+  source: sixty seconds with a token, ten minutes without one, because GitHub
+  allows 60 unauthenticated requests an hour. Any number of open tabs share
+  that. A refresh that fails keeps the last good answer and reports the error
+  in the inbox instead of dropping rows.
 - **Publishing degrades instead of failing.** GitHub refuses some reviews
   outright: approving or requesting changes on your own pull request, or a
   comment on a line it does not consider part of the diff. The adapter tries
-  the planned review, then the same review as a plain comment with the verdict
-  in the text, then everything folded into the body. Content is never dropped.
+  the planned review, then the same review as a plain comment (the body's
+  headline already states the verdict), then everything folded into the body.
+  Content is never dropped.
 - The review is created on the commit the council reviewed. `CoderApplication`
   re-reads the pull request before publishing and refuses if the head moved.
+  The session records `PublicationStarted` before GitHub is called and
+  `ReviewPublished` or `PublicationFailed` after, so a review is posted once
+  even if the process dies in between.
+- GitHub's vocabulary stops here. The domain speaks of a `Decision`; only
+  this adapter turns it into GitHub's review event. The webhook is GitHub's
+  protocol too: the adapter verifies the signature over the raw bytes and
+  translates the payload, and the composition root hands that function to the
+  HTTP server, so no adapter imports another.
 
 `DemoSourceControl` serves three sample pull requests from fixtures and
 simulates publication.
@@ -192,7 +241,7 @@ is evidence about the product rather than a mock-up of it.
 | `GET /api/pulls` | Inbox: open pull requests with their latest session |
 | `POST /api/pulls/import` | Follow one pull request by URL |
 | `GET /api/pulls/:provider/:owner/:repo/:number` | Detail: files, stats, risk, sessions |
-| `GET …/file?path=` | Both sides of one file |
+| `GET …/file?path=&sha=` | Both sides of one file. With `sha`, a conflict when the head is no longer that commit |
 | `POST …/reviews` | Convene the council |
 | `GET /api/sessions/:id` | Folded session state |
 | `GET /api/sessions/:id/events` | Server-Sent Events. Replays after `Last-Event-ID` or `?after=`, then streams |
@@ -201,15 +250,27 @@ is evidence about the product rather than a mock-up of it.
 | `POST /api/sessions/:id/publish` | Publish the review |
 | `POST /api/webhooks/github` | Signed `pull_request` webhooks, for automatic review |
 
+**Who may call it.** With `CODER_API_TOKEN` set, every route except health
+and the webhook requires the bearer token. The check is a hook on the scope
+the routes are registered in, so it follows the route that matched and not
+the spelling of the URL. Without a token the API only answers requests made
+on this machine: a loopback `Host`, no foreign `Origin`, no cross-site fetch.
+That closes cross-site requests from a web page and DNS rebinding. The
+server refuses to start on a host that is not loopback unless a token is set.
+
 Errors are `{ "error": { "code", "message" } }` with a message written for
-the person at the screen. The event stream subscribes to the bus before it
+the person at the screen. Adapters raise the application's own error codes,
+so a pull request missing on GitHub answers 404 and a GitHub outage 502. The event stream subscribes to the bus before it
 replays the store, so no event can fall between the two.
 
 ## 7. Persistence
 
 `FileEventStore` is an append-only JSON-lines file per session under
-`CODER_DATA_DIR`. A torn last line from a crash is ignored on load. It is
-enough for one node and a demo. `EventStore` is a three-method port, so moving
+`CODER_DATA_DIR`. A batch is written to the file before memory is updated.
+On open, a torn last line from a crash is cut off the file, and a stream
+whose sequence is not 1..n is set aside as `<file>.corrupt` and reported, so
+a damaged file is never mistaken for a shorter history. It is enough for one
+node and a demo. `EventStore` is a three-method port, so moving
 to Postgres or a dedicated event store touches one file and the composition
 root. The bus is in memory for the same reason.
 
@@ -231,6 +292,15 @@ web/src/styles/      design tokens (dark and light) and the stylesheet
   per-viewer preference in local storage, read defensively. Everything else is
   derived from the session state.
 - Below 980px the three columns become one pane with a bottom dock.
+- The workspace states no rule of the council. What is published, a finding's
+  consensus level and whether a human may still decide are imported from the
+  domain (`isPublished`, `levelOf`, `decisionsOpen`). Its own view rules live
+  in `state/selectors.ts`, and the reducer behind `useWorkspace` is a pure
+  exported function; both are tested without a DOM. The React components are
+  not under test yet.
+- A session is never drawn over code it did not review: when the pull request
+  has new commits, the file view hides the session's markers and patches and
+  says why.
 
 ## 9. Testing
 
@@ -239,11 +309,14 @@ Tests run without the network and without credentials.
 | Suite | What it pins down |
 |---|---|
 | `change.test.ts` | Diff parsing, which lines can carry a comment, risk ranking |
-| `deliberation.test.ts` | The aggregate's invariants, consensus, verdict policy, anchoring, patching, the publication plan |
+| `deliberation.test.ts` | The aggregate's invariants, consensus and its boundary cases, the verdict policy and the fallback verdict, anchoring, where a patch lands, the publication selection and its rendering |
+| `publishing.test.ts`, `restart.test.ts`, `persistence.test.ts` | The publication intent and its failure, what a restart finds and settles, the event log under a failed write, a torn file and a stream with a hole |
+| `conductReview.test.ts`, `autoReview.test.ts`, `inbox.test.ts`, `catalog.test.ts` | The limit on concurrent councils, deadlines, a reviewer or a recording that fails, automatic review on partial knowledge, how many requests the inbox costs GitHub, the content budget |
 | `demoCouncil.test.ts`, `demoTime.test.ts` | The whole protocol end to end on the fixtures, in both languages, and the fixtures' own consistency |
-| `claudeCouncil.test.ts` | The official SDK against a local server speaking the Messages API streaming wire format: request shape, cache order, fallback, refusals, truncation, bad key |
-| `github.test.ts` | Octokit against a local server speaking the REST API: pagination, merge base, contents, publishing and its fallbacks, error messages |
-| `http.test.ts`, `liveMode.test.ts` | The real server: event stream life cycle, static app, API token, a full live review and publication, stale commits, webhooks, restart, import |
+| `claudeCouncil.test.ts` | The official SDK against a local server speaking the Messages API streaming wire format: request shape, cache order, the prompt boundary under hostile input, fallback, refusals, truncation, a stalled reviewer, a bad key |
+| `github.test.ts` | Octokit against a local server speaking the REST API: pagination, merge base, contents, publishing and its fallbacks, the webhook receiver, error messages |
+| `http.test.ts`, `liveMode.test.ts`, `config.test.ts` | The real server through the real HTTP client: one contract suite over both deliveries of the API, the access guards including encoded spellings, the event stream's life cycle, a full live review and publication, stale commits, webhooks, restart, import |
+| `workspaceSelectors.test.ts`, `workspaceReducer.test.ts`, `workspacePolling.test.ts` | The workspace without a browser: its view rules, its reducer (replay, another session's events, a lost stream, a pull request that moved), the refresh that pauses while the tab is hidden |
 
 The stand-ins for Anthropic and GitHub are servers, not mocks of our own
 classes, so the real SDKs and our adapters are exercised together. What that
@@ -261,3 +334,6 @@ a run with real credentials.
 | JSON-lines files, in-memory bus | No infrastructure to install for a pilot | Single node |
 | Four reviewers in parallel, twice | Depth per lens, and a debate that filters | Ten model calls per review; the prompt cache makes nine of them cheap on input |
 | Personas as archetypes | The council needs distinct, recognisable schools of thought | They must never be presented as the people who inspired them |
+| An intent event before publishing | A review is posted once, even if the process dies between GitHub's answer and our record of it | An interrupted attempt asks a person to look at the pull request before publishing again |
+| Loopback only without a token | A developer's browser must not be a way into the API | Any shared deployment has to set `CODER_API_TOKEN` |
+| Auto-review baseline in memory | Turning the feature on, or restarting, never triggers a burst of paid reviews | Pull requests that changed while CodeR was down are not reviewed automatically |
