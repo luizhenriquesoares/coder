@@ -102,7 +102,7 @@ const en = {
   conveneAgain: "Convene again",
   convening: "Convening…",
   engineName: { claude: "Claude council", scripted: "Scripted demo" },
-  noEngine: "Set ANTHROPIC_API_KEY on the server to review real pull requests.",
+  noEngine: "Give the server a Claude credential to review real pull requests: ANTHROPIC_AUTH_TOKEN, ANTHROPIC_PROFILE or ANTHROPIC_API_KEY.",
   trigger: {
     manual: "Convened by you",
     webhook: "Convened automatically when the pull request was pushed",
@@ -328,7 +328,7 @@ const pt: Strings = {
   conveneAgain: "Convocar de novo",
   convening: "Convocando…",
   engineName: { claude: "Conselho Claude", scripted: "Demo roteirizada" },
-  noEngine: "Defina ANTHROPIC_API_KEY no servidor para revisar pull requests reais.",
+  noEngine: "Dê ao servidor uma credencial do Claude para revisar pull requests reais: ANTHROPIC_AUTH_TOKEN, ANTHROPIC_PROFILE ou ANTHROPIC_API_KEY.",
   trigger: {
     manual: "Convocado por você",
     webhook: "Convocado automaticamente quando o pull request foi enviado",

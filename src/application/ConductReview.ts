@@ -124,7 +124,7 @@ export class ConductReview {
     if (!chosen) {
       throw new ApplicationError(
         "not_configured",
-        "No review engine can review this pull request. Set ANTHROPIC_API_KEY to enable the Claude council.",
+        "No review engine can review this pull request. Give the server a Claude credential to enable the Claude council: ANTHROPIC_AUTH_TOKEN, ANTHROPIC_PROFILE or ANTHROPIC_API_KEY.",
       );
     }
     return chosen;

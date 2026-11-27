@@ -24,9 +24,19 @@ export type Reply =
     }
   | { readonly status: number; readonly errorType: string; readonly message: string };
 
+/** A request the fake token endpoint received: a sign-in renewing its access token. */
+export interface RecordedRenewal {
+  readonly headers: Record<string, string | string[] | undefined>;
+  readonly body: { grant_type?: string; refresh_token?: string; client_id?: string };
+}
+
+export type Renewal = { readonly accessToken: string; readonly expiresIn: number; readonly refreshToken?: string } | { readonly status: number; readonly error: string };
+
 export interface FakeAnthropic {
   readonly baseURL: string;
   readonly requests: RecordedRequest[];
+  /** What arrived at POST /v1/oauth/token. */
+  readonly renewals: RecordedRenewal[];
   /** For each request, how many responses had already started streaming when it arrived. */
   readonly startedBefore: number[];
   close(): Promise<void>;
@@ -35,9 +45,15 @@ export interface FakeAnthropic {
 /**
  * A local stand-in for POST /v1/messages that speaks the real streaming wire
  * format (server-sent events), so the official SDK is exercised end to end.
+ * It also answers POST /v1/oauth/token, where a sign-in renews its access
+ * token: every renewal is refused unless `renew` says otherwise.
  */
-export async function startFakeAnthropic(reply: (request: RecordedRequest) => Reply): Promise<FakeAnthropic> {
+export async function startFakeAnthropic(
+  reply: (request: RecordedRequest) => Reply,
+  renew: (renewal: RecordedRenewal) => Renewal = () => ({ status: 400, error: "invalid_grant" }),
+): Promise<FakeAnthropic> {
   const requests: RecordedRequest[] = [];
+  const renewals: RecordedRenewal[] = [];
   const startedBefore: number[] = [];
   let responsesStarted = 0;
 
@@ -46,6 +62,21 @@ export async function startFakeAnthropic(reply: (request: RecordedRequest) => Re
     req.on("data", (chunk) => (raw += chunk));
     req.on("end", () => {
       const body = JSON.parse(raw);
+      if (req.url?.split("?")[0] === "/v1/oauth/token") {
+        const renewal: RecordedRenewal = { headers: req.headers, body };
+        renewals.push(renewal);
+        const answer = renew(renewal);
+        const failed = "status" in answer;
+        res.writeHead(failed ? answer.status : 200, { "content-type": "application/json", "request-id": "req_fake_token" });
+        res.end(
+          JSON.stringify(
+            failed
+              ? { error: answer.error }
+              : { token_type: "Bearer", access_token: answer.accessToken, expires_in: answer.expiresIn, ...(answer.refreshToken ? { refresh_token: answer.refreshToken } : {}) },
+          ),
+        );
+        return;
+      }
       const persona: string = body.messages?.[0]?.content?.[1]?.text ?? "";
       const properties = body.output_config?.format?.schema?.properties ?? {};
       const request: RecordedRequest = {
@@ -114,6 +145,7 @@ export async function startFakeAnthropic(reply: (request: RecordedRequest) => Re
   return {
     baseURL: `http://127.0.0.1:${port}`,
     requests,
+    renewals,
     startedBefore,
     close: () =>
       new Promise((resolve) => {

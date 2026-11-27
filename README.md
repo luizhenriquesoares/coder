@@ -82,7 +82,7 @@ cp .env.example .env
 
 | You set | You get |
 |---|---|
-| `ANTHROPIC_API_KEY` | The real council: Claude reviews any pull request you open. |
+| A Claude credential ([which one](#the-claude-credential)) | The real council: Claude reviews any pull request you open. |
 | `GITHUB_TOKEN` | Private repositories and publishing reviews. A fine-grained token with *Pull requests: read and write* and *Contents: read-only*. |
 | `GITHUB_REPOSITORIES=owner/repo,owner/other` | The open pull requests of those repositories in the inbox. |
 | `AUTO_REVIEW=true` | The council reviews every new commit of every open, non-draft pull request, without anyone asking. |
@@ -104,6 +104,39 @@ Then `npm run build && npm start`.
   point a GitHub webhook (event *Pull requests*, content type
   `application/json`) at `POST /api/webhooks/github` and set
   `GITHUB_WEBHOOK_SECRET`.
+
+### The Claude credential
+
+CodeR calls the Claude API, so it needs a credential of a
+[Claude Console](https://platform.claude.com) organization, or of a gateway
+in front of one. That organization is where the usage is billed. Any one of
+these will do:
+
+| You set | What it is | Where it fits |
+|---|---|---|
+| `ANTHROPIC_AUTH_TOKEN` | A bearer token. Either your LLM gateway's, with `ANTHROPIC_BASE_URL` pointing at the gateway, or a short-lived access token of your Console sign-in, which `ant auth print-credentials --env` prints ready for `.env`. | A gateway, or a first try. |
+| `ANTHROPIC_PROFILE=default` | Your Console sign-in on this machine, made once with [`ant auth login`](https://platform.claude.com/docs/en/cli-sdks-libraries/cli/authentication). No key is created and nothing is pasted anywhere. CodeR renews the token by itself until the sign-in runs out, some weeks later. | Your own machine. |
+| `ANTHROPIC_API_KEY` | A static key from the [Console](https://platform.claude.com/settings/keys). | A server, with the key in its secret store. |
+
+That is also CodeR's order of preference: with more than one set it uses the
+first, and says which in the line it logs at start-up.
+
+- **A Claude plan's login is not one of them.** What Claude Code signs in
+  with, or a token from `claude setup-token`, is meant for Claude Code and
+  Anthropic's own apps; a product that calls the API uses a Console
+  credential ([Anthropic's rule](https://code.claude.com/docs/en/legal-and-compliance#authentication-and-credential-use)).
+  A Max, Ultra or Team plan does include
+  [monthly API credits](https://platform.claude.com/docs/en/about-claude/api-credits-for-subscribers)
+  that you can claim for a Console organization, and CodeR runs on those like
+  on any other credits.
+- **Set `ANTHROPIC_PROFILE` in `.env`, not with `export`.** Claude Code reads
+  the same variable, and with it exported would move to that sign-in and to
+  its billing.
+- **When the API refuses the credential**, the reviewer's place in the
+  session says which credential it was, the API's own reason, and what to do:
+  a new token, `ant auth login` again, or another key. A sign-in that this
+  machine does not have stops CodeR at start-up, with the command that
+  creates it.
 
 **Cost.** A session is ten model calls: four opening statements, four debate
 statements, the implementer and the moderator. The pull request is sent once
@@ -214,7 +247,7 @@ request before publishing again.
 | **The real Anthropic and GitHub APIs** | **Not exercised yet.** This build was made in an environment without credentials. Expect to adjust details the first time you run it with real keys. |
 
 ```bash
-npm test          # 173 tests
+npm test          # 187 tests
 npm run typecheck
 ```
 
@@ -274,9 +307,17 @@ npm start        # abra http://127.0.0.1:4317
 ```
 
 Para usar com PRs de verdade, copie `.env.example` para `.env` e preencha
-`ANTHROPIC_API_KEY`, `GITHUB_TOKEN` e `GITHUB_REPOSITORIES`. As chaves ficam
-só nesse arquivo, na sua máquina. A interface tem português: use o seletor
-EN/PT no topo.
+uma credencial do Claude, `GITHUB_TOKEN` e `GITHUB_REPOSITORIES`. As
+credenciais ficam só nesse arquivo, na sua máquina. A interface tem
+português: use o seletor EN/PT no topo.
+
+A credencial do Claude não precisa ser uma chave de API. Na ordem em que o
+CodeR prefere: `ANTHROPIC_AUTH_TOKEN` (um token de acesso, ou o token do seu
+gateway), `ANTHROPIC_PROFILE=default` (o login da Claude Console feito uma
+vez com `ant auth login`, sem chave e renovado sozinho) ou
+`ANTHROPIC_API_KEY`. O login de um plano Claude, o que o Claude Code usa,
+não serve: é reservado ao Claude Code e aos apps da Anthropic. Os detalhes
+estão em [The Claude credential](#the-claude-credential).
 
 O próprio conselho revisou este código antes da primeira versão: 34 achados,
 todos endossados, corrigidos ou adiados com justificativa. O registro está em

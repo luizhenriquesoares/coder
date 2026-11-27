@@ -5,6 +5,7 @@ import { describeError } from "./application/errors.js";
 import type { Logger } from "./application/ports.js";
 import { loadConfig } from "./composition/config.js";
 import { createServerApplication } from "./composition/server.js";
+import { describeCredential } from "./infrastructure/claude/credential.js";
 import { githubWebhookReceiver } from "./infrastructure/github/webhook.js";
 import { buildHttpServer } from "./infrastructure/http/server.js";
 
@@ -32,13 +33,21 @@ async function main(): Promise<void> {
   });
 
   await server.listen({ port: config.port, host: config.host });
+  const { credential, ignoredCredentials } = config.claude;
   logger.info("CodeR is listening", {
     url: `http://${config.host}:${config.port}`,
-    claude: config.claude.enabled ? config.claude.model : "off (set ANTHROPIC_API_KEY)",
+    claude: credential ? `${config.claude.model}, ${describeCredential(credential)}` : "off (set ANTHROPIC_AUTH_TOKEN, ANTHROPIC_PROFILE or ANTHROPIC_API_KEY)",
     github: config.github.token ? "token configured" : "read-only, public repositories",
     repositories: config.github.repositories.map((r) => `${r.owner}/${r.repo}`),
     autoReview: config.autoReview.enabled,
   });
+
+  if (credential && ignoredCredentials.length > 0) {
+    logger.warn("More than one Claude credential is set. CodeR prefers an auth token to the Console sign-in, and both to an API key.", {
+      using: describeCredential(credential),
+      ignored: ignoredCredentials,
+    });
+  }
 
   if (config.autoReview.enabled) {
     const poll = () => autoReview.poll().catch((error) => logger.warn("Polling failed", { error: describeError(error) }));

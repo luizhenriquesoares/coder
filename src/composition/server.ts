@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import Anthropic from "@anthropic-ai/sdk";
 import { Octokit } from "@octokit/rest";
 import type { AppConfig } from "../application/api.js";
 import { AutoReview } from "../application/AutoReview.js";
@@ -13,6 +12,7 @@ import { SessionRepository } from "../application/SessionRepository.js";
 import type { Provider } from "../domain/change/types.js";
 import { InMemoryEventBus } from "../infrastructure/bus/InMemoryEventBus.js";
 import { ClaudeCouncil } from "../infrastructure/claude/ClaudeCouncil.js";
+import { adviceFor, anthropicClient, requireSignIn } from "../infrastructure/claude/credential.js";
 import { DemoSourceControl } from "../infrastructure/demo/DemoSourceControl.js";
 import { ScriptedCouncil } from "../infrastructure/demo/ScriptedCouncil.js";
 import { GitHubSourceControl } from "../infrastructure/github/GitHubSourceControl.js";
@@ -47,13 +47,13 @@ export async function createServerApplication(config: ServerConfig, logger: Logg
 
   // Order is preference: Claude reviews anything; the scripted council only knows the demo fixtures.
   const councils: CouncilAgents[] = [];
-  if (config.claude.enabled) {
+  const { credential } = config.claude;
+  if (credential) {
+    if (credential.kind === "sign-in") await requireSignIn(credential.profile);
     councils.push(
       new ClaudeCouncil({
-        client: new Anthropic({
-          ...(config.claude.apiKey ? { apiKey: config.claude.apiKey } : { authToken: config.claude.authToken ?? null }),
-          ...(config.claude.baseUrl ? { baseURL: config.claude.baseUrl } : {}),
-        }),
+        client: anthropicClient(credential, config.claude.baseUrl),
+        credentialAdvice: adviceFor(credential),
         model: config.claude.model,
         effort: config.claude.effort,
         maxOutputTokens: config.claude.maxOutputTokens,
@@ -70,7 +70,7 @@ export async function createServerApplication(config: ServerConfig, logger: Logg
   const appConfig: AppConfig = {
     mode: "server",
     engines: [
-      { engine: "claude", available: config.claude.enabled, model: config.claude.enabled ? config.claude.model : null },
+      { engine: "claude", available: credential !== null, model: credential ? config.claude.model : null },
       { engine: "scripted", available: config.demo, model: null },
     ],
     github: {

@@ -1,6 +1,7 @@
 import { createHmac, randomBytes } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
+import { WorkloadIdentityError } from "@anthropic-ai/sdk/lib/credentials/types";
 import type { z } from "zod";
 import type {
   AgentBrief,
@@ -17,6 +18,7 @@ import type {
 } from "../../application/ports.js";
 import { revisionKey, type PullRequestSnapshot } from "../../domain/change/types.js";
 import type { Usage } from "../../domain/deliberation/model.js";
+import type { CredentialAdvice } from "./credential.js";
 import { usageOf } from "./pricing.js";
 import {
   boundaryRule,
@@ -39,6 +41,8 @@ export interface ClaudeCouncilOptions {
   readonly effort: Effort;
   readonly logger: Logger;
   readonly maxOutputTokens?: number;
+  /** Which credential the client presents and how to fix it, for the message left when the API refuses it. */
+  readonly credentialAdvice?: CredentialAdvice;
 }
 
 /** Raised with a message that is safe and useful to show in the workspace. */
@@ -155,7 +159,7 @@ export class ClaudeCouncil implements CouncilAgents {
       });
       return { output: message.parsed_output as z.infer<Schema>, usage };
     } catch (error) {
-      throw toCouncilAgentError(error);
+      throw toCouncilAgentError(error, this.options.credentialAdvice ?? UNNAMED_CREDENTIAL);
     } finally {
       warmed();
     }
@@ -179,14 +183,30 @@ export class ClaudeCouncil implements CouncilAgents {
   }
 }
 
-function toCouncilAgentError(error: unknown): CouncilAgentError {
+const UNNAMED_CREDENTIAL: CredentialAdvice = { name: "credential", fix: "Check the Claude credential the server was given." };
+
+function toCouncilAgentError(error: unknown, credential: CredentialAdvice): CouncilAgentError {
   if (error instanceof CouncilAgentError) return error;
-  if (error instanceof Anthropic.AuthenticationError) return new CouncilAgentError("The Anthropic API key was rejected. Check ANTHROPIC_API_KEY.");
-  if (error instanceof Anthropic.PermissionDeniedError) return new CouncilAgentError("This API key is not allowed to use the configured model.");
+  // The API's own sentence says why: an expired token and a token of the wrong kind are refused in different words.
+  const said = error instanceof Anthropic.APIError && error.apiMessage ? withoutFullStop(error.apiMessage) : null;
+  if (error instanceof Anthropic.AuthenticationError) {
+    return new CouncilAgentError(`The Claude API refused the ${credential.name}${said ? ` (${said})` : ""}. ${credential.fix}`);
+  }
+  if (error instanceof Anthropic.PermissionDeniedError) {
+    return new CouncilAgentError(said ? `The Claude API denied the request: ${said}.` : `This ${credential.name} is not allowed to use the configured model.`);
+  }
   if (error instanceof Anthropic.NotFoundError) return new CouncilAgentError("The configured model was not found. Check CODER_MODEL.");
   if (error instanceof Anthropic.RateLimitError) return new CouncilAgentError("Rate limited by the Claude API after retries. Try again in a moment.");
-  if (error instanceof Anthropic.BadRequestError) return new CouncilAgentError(`The Claude API rejected the request: ${error.message}`);
+  if (error instanceof Anthropic.BadRequestError) return new CouncilAgentError(`The Claude API rejected the request: ${said ? `${said}.` : error.message}`);
+  // Raised before any request leaves: the sign-in's token is missing, or could not be renewed.
+  if (error instanceof WorkloadIdentityError) {
+    return new CouncilAgentError(`The ${credential.name} could not be used: ${withoutFullStop(error.message)}. ${credential.fix}`);
+  }
   if (error instanceof Anthropic.APIConnectionError) return new CouncilAgentError("Could not reach the Claude API.");
   if (error instanceof Anthropic.APIError) return new CouncilAgentError(`Claude API error ${error.status ?? ""}: ${error.message}`.trim());
   return new CouncilAgentError(error instanceof Error ? error.message : "Unknown error while asking the reviewer");
+}
+
+function withoutFullStop(sentence: string): string {
+  return sentence.trim().replace(/\.$/, "");
 }

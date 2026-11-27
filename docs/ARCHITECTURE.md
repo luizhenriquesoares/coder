@@ -161,9 +161,19 @@ Things that are deliberate:
   domain validates again, because a schema cannot know that a finding id
   exists.
 - **Adaptive thinking**, streaming, and a configurable effort.
-- **Failure is translated.** A rejected key, a missing model, a rate limit, a
-  refusal and a truncated answer each become a `CouncilAgentError` with a
-  message a person can act on.
+- **Failure is translated.** A refused credential, a missing model, a rate
+  limit, a refusal and a truncated answer each become a `CouncilAgentError`
+  with a message a person can act on.
+- **One credential, chosen once.** The configuration turns the environment
+  into a `ClaudeCredential`: an auth token, the Claude Console sign-in stored
+  on the machine, or an API key, preferred in that order. The composition
+  root builds the SDK client from it explicitly
+  (`infrastructure/claude/credential.ts`), so the SDK never picks another one
+  from the environment by rules of its own. An OAuth access token is handed
+  to the SDK as a token provider, because that is the form in which the SDK
+  announces OAuth to the API; a gateway's token goes as a plain bearer token.
+  A sign-in is renewed by the SDK. The adapter is told only how to name the
+  credential and what fixes it, never the secret.
 - **Untrusted input.** The pull request is written by its author, so it never
   travels in the instruction channel. It sits in the user turn inside a
   boundary derived for each commit by HMAC under a key made at start-up,
@@ -313,7 +323,8 @@ Tests run without the network and without credentials.
 | `publishing.test.ts`, `restart.test.ts`, `persistence.test.ts` | The publication intent and its failure, what a restart finds and settles, the event log under a failed write, a torn file and a stream with a hole |
 | `conductReview.test.ts`, `autoReview.test.ts`, `inbox.test.ts`, `catalog.test.ts` | The limit on concurrent councils, deadlines, a reviewer or a recording that fails, automatic review on partial knowledge, how many requests the inbox costs GitHub, the content budget |
 | `demoCouncil.test.ts`, `demoTime.test.ts` | The whole protocol end to end on the fixtures, in both languages, and the fixtures' own consistency |
-| `claudeCouncil.test.ts` | The official SDK against a local server speaking the Messages API streaming wire format: request shape, cache order, the prompt boundary under hostile input, fallback, refusals, truncation, a stalled reviewer, a bad key |
+| `claudeCouncil.test.ts` | The official SDK against a local server speaking the Messages API streaming wire format: request shape, cache order, the prompt boundary under hostile input, fallback, refusals, truncation, a stalled reviewer, a refused credential |
+| `claudeCredentials.test.ts` | Which credential the server presents, from the configuration to the request on the wire: the order of preference, an OAuth token against a gateway's, a key left in the environment, the Console sign-in and its renewal, a sign-in the machine does not have, what each refusal says |
 | `github.test.ts` | Octokit against a local server speaking the REST API: pagination, merge base, contents, publishing and its fallbacks, the webhook receiver, error messages |
 | `http.test.ts`, `liveMode.test.ts`, `config.test.ts` | The real server through the real HTTP client: one contract suite over both deliveries of the API, the access guards including encoded spellings, the event stream's life cycle, a full live review and publication, stale commits, webhooks, restart, import |
 | `workspaceSelectors.test.ts`, `workspaceReducer.test.ts`, `workspacePolling.test.ts` | The workspace without a browser: its view rules, its reducer (replay, another session's events, a lost stream, a pull request that moved), the refresh that pauses while the tab is hidden |
