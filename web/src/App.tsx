@@ -294,7 +294,7 @@ export function App({ workspace, language, onLanguageChange, theme, onToggleThem
             )}
           </div>
           {bottom ? (
-            <BottomPanel t={t} language={language} tab={bottom} onTab={setBottom} onClose={() => setBottom(null)} events={model.events} plan={model.plan} />
+            <BottomPanel t={t} language={language} tab={bottom} onTab={setBottom} onClose={() => setBottom(null)} events={model.events} plan={model.plan} planError={model.planError} />
           ) : null}
         </main>
 
@@ -312,9 +312,10 @@ export function App({ workspace, language, onLanguageChange, theme, onToggleThem
             convening={model.busy === "convening"}
             onConvene={convene}
             plan={model.plan}
+            planError={model.planError}
             stale={stale}
             canPublish={canPublish}
-            publishing={model.busy === "publishing"}
+            publishing={model.busy === "publishing" || session?.publishing === true}
             onPublish={() => void actions.publish()}
             onPreviewPublication={() => setBottom("publication")}
           />

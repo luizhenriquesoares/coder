@@ -27,8 +27,11 @@ export interface CouncilPanelProps {
   readonly convening: boolean;
   onConvene(engine?: Engine): void;
   readonly plan: PublicationPlan | null;
+  /** Why the preview could not be prepared, shown instead of the plan. */
+  readonly planError: string | null;
   readonly stale: boolean;
   readonly canPublish: boolean;
+  /** A publication is under way: this tab asked for it, or the session records one with no outcome yet. */
   readonly publishing: boolean;
   onPublish(): void;
   onPreviewPublication(): void;
@@ -204,7 +207,7 @@ function PatchList({ cards }: { cards: CardContext }) {
   );
 }
 
-function PublishBar({ t, session, plan, stale, canPublish, publishing, onPublish, onPreviewPublication }: CouncilPanelProps & { session: SessionState }) {
+function PublishBar({ t, session, plan, planError, stale, canPublish, publishing, onPublish, onPreviewPublication }: CouncilPanelProps & { session: SessionState }) {
   if (session.status !== "concluded") return null;
   const { publication } = session;
   if (publication) {
@@ -238,7 +241,7 @@ function PublishBar({ t, session, plan, stale, canPublish, publishing, onPublish
         <div className="publishbar__what">
           <p className="publishbar__title">{t.publishTitle}</p>
           <p className="publishbar__note">
-            {plan ? `${t.decision[plan.decision]} · ${t.publishSummary(plan.comments.length, suggestions)}` : t.loading}
+            {plan ? `${t.decision[plan.decision]} · ${t.publishSummary(plan.comments.length, suggestions)}` : planError ? null : t.loading}
           </p>
         </div>
         <span className="publishbar__actions">
@@ -248,7 +251,7 @@ function PublishBar({ t, session, plan, stale, canPublish, publishing, onPublish
           </button>
           <button type="button" className="btn btn--primary" disabled={publishing || !plan || blocked !== null} onClick={onPublish}>
             <Icon name="send" size={14} />
-            {publishing ? t.publishing : t.publish}
+            {publishing ? t.publishing : session.publicationFailure ? t.publishAgain : t.publish}
           </button>
         </span>
       </div>
@@ -256,6 +259,18 @@ function PublishBar({ t, session, plan, stale, canPublish, publishing, onPublish
         <p className="publishbar__warning publishbar__warning--info">
           <Icon name="alert" size={14} />
           {t.outcomeChanged(plan.councilDecision, plan.decision)}
+        </p>
+      ) : null}
+      {planError ? (
+        <p className="publishbar__warning">
+          <Icon name="alert" size={14} />
+          {t.previewFailed(planError)}
+        </p>
+      ) : null}
+      {session.publicationFailure && !publishing ? (
+        <p className="publishbar__warning">
+          <Icon name="alert" size={14} />
+          {t.publicationFailed(session.publicationFailure)}
         </p>
       ) : null}
       {blocked ? (

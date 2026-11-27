@@ -154,7 +154,10 @@ const en = {
       { approve: "approved the change", request_changes: "asked for changes", comment: "left a comment" }[council]
     }, and this review will be published as ${{ approve: "an approval", request_changes: "a request for changes", comment: "a comment" }[published]}.`,
   publish: "Publish review",
+  publishAgain: "Publish again",
   publishing: "Publishing…",
+  publicationFailed: (reason: string) => `The last attempt to publish failed: ${reason}`,
+  previewFailed: (reason: string) => `The preview could not be prepared: ${reason}`,
   preview: "Preview",
   reviewPublished: "Review published",
   simulated: "Simulated in demo mode: nothing was sent to GitHub.",
@@ -369,6 +372,9 @@ const pt: Strings = {
       { approve: "aprovou a mudança", request_changes: "pediu mudanças", comment: "deixou um comentário" }[council]
     }, e esta revisão será publicada como ${{ approve: "uma aprovação", request_changes: "um pedido de mudanças", comment: "um comentário" }[published]}.`,
   publish: "Publicar revisão",
+  publishAgain: "Publicar de novo",
+  publicationFailed: (reason) => `A última tentativa de publicar falhou: ${reason}`,
+  previewFailed: (reason) => `Não foi possível preparar a prévia: ${reason}`,
   publishing: "Publicando…",
   preview: "Pré-visualizar",
   reviewPublished: "Revisão publicada",

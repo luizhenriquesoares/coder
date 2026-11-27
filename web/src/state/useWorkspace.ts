@@ -24,6 +24,8 @@ export interface WorkspaceModel {
   readonly session: SessionState | null;
   readonly events: readonly DomainEvent[];
   readonly plan: PublicationPlan | null;
+  /** Why the publication preview could not be prepared. */
+  readonly planError: string | null;
   readonly busy: "convening" | "publishing" | "importing" | null;
   /** The last action that failed, shown until dismissed. */
   readonly notice: string | null;
@@ -38,7 +40,8 @@ export type WorkspaceAction =
   | { type: "detailFailed"; ref: PullRequestRef; message: string }
   | { type: "sessionOpened"; sessionId: string | null }
   | { type: "event"; event: DomainEvent }
-  | { type: "plan"; sessionId: string; plan: PublicationPlan | null }
+  | { type: "plan"; sessionId: string; plan: PublicationPlan }
+  | { type: "planFailed"; sessionId: string; message: string }
   | { type: "busy"; busy: WorkspaceModel["busy"] }
   | { type: "notice"; notice: string | null };
 
@@ -54,6 +57,7 @@ export const INITIAL_MODEL: WorkspaceModel = {
   session: null,
   events: [],
   plan: null,
+  planError: null,
   busy: null,
   notice: null,
 };
@@ -69,19 +73,19 @@ export function reduceWorkspace(model: WorkspaceModel, action: WorkspaceAction):
       return { ...model, inbox: action.inbox };
     case "selected":
       if (sameRef(model.selected, action.ref)) return model;
-      return { ...model, selected: action.ref, detail: null, detailError: null, sessionId: null, session: null, events: [], plan: null };
+      return { ...model, selected: action.ref, detail: null, detailError: null, sessionId: null, session: null, events: [], plan: null, planError: null };
     case "detail": {
       if (!sameRef(model.selected, action.ref)) return model;
       const latest = action.detail.sessions[0]?.sessionId ?? null;
       const sessionId = action.followLatest ? latest : model.sessionId;
       return sessionId === model.sessionId
         ? { ...model, detail: action.detail, detailError: null }
-        : { ...model, detail: action.detail, detailError: null, sessionId, session: null, events: [], plan: null };
+        : { ...model, detail: action.detail, detailError: null, sessionId, session: null, events: [], plan: null, planError: null };
     }
     case "detailFailed":
       return sameRef(model.selected, action.ref) ? { ...model, detailError: action.message } : model;
     case "sessionOpened":
-      return { ...model, sessionId: action.sessionId, session: null, events: [], plan: null };
+      return { ...model, sessionId: action.sessionId, session: null, events: [], plan: null, planError: null };
     case "event": {
       const { event } = action;
       if (event.sessionId !== model.sessionId) return model;
@@ -90,7 +94,9 @@ export function reduceWorkspace(model: WorkspaceModel, action: WorkspaceAction):
       return session ? { ...model, session, events: [...model.events, event] } : model;
     }
     case "plan":
-      return action.sessionId === model.sessionId ? { ...model, plan: action.plan } : model;
+      return action.sessionId === model.sessionId ? { ...model, plan: action.plan, planError: null } : model;
+    case "planFailed":
+      return action.sessionId === model.sessionId ? { ...model, plan: null, planError: action.message } : model;
     case "busy":
       return { ...model, busy: action.busy };
     case "notice":
@@ -201,7 +207,7 @@ export function useWorkspace(api: CoderApi, language: Language): [WorkspaceModel
     let cancelled = false;
     api.publicationPreview(sessionId).then(
       (plan) => !cancelled && dispatch({ type: "plan", sessionId, plan }),
-      () => !cancelled && dispatch({ type: "plan", sessionId, plan: null }), // e.g. the pull request moved on
+      (error) => !cancelled && dispatch({ type: "planFailed", sessionId, message: messageOf(error) }), // e.g. the pull request moved on
     );
     return () => {
       cancelled = true;

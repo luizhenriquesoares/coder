@@ -17,6 +17,7 @@ export interface BottomPanelProps {
   onClose(): void;
   readonly events: readonly DomainEvent[];
   readonly plan: PublicationPlan | null;
+  readonly planError: string | null;
 }
 
 /** What an event says, beyond its name. The log is the session's event stream, unedited. */
@@ -85,8 +86,8 @@ function SessionLog({ events, t, language }: { events: readonly DomainEvent[]; t
   );
 }
 
-function Publication({ plan, t }: { plan: PublicationPlan | null; t: Strings }) {
-  if (!plan) return <EmptyState title={t.emptyPublication} icon="send" />;
+function Publication({ plan, planError, t }: { plan: PublicationPlan | null; planError: string | null; t: Strings }) {
+  if (!plan) return planError ? <EmptyState title={t.previewFailed(planError)} icon="alert" /> : <EmptyState title={t.emptyPublication} icon="send" />;
   return (
     <div className="publication">
       <section className="publication__part">
@@ -115,7 +116,7 @@ function Publication({ plan, t }: { plan: PublicationPlan | null; t: Strings }) 
 }
 
 /** The panel under the editor: the raw event stream, and exactly what would be sent to GitHub. */
-export function BottomPanel({ t, language, tab, onTab, onClose, events, plan }: BottomPanelProps) {
+export function BottomPanel({ t, language, tab, onTab, onClose, events, plan, planError }: BottomPanelProps) {
   return (
     <section className="bottom">
       <header className="bottom__head" role="tablist">
@@ -136,7 +137,7 @@ export function BottomPanel({ t, language, tab, onTab, onClose, events, plan }: 
           <Icon name="x" size={14} />
         </button>
       </header>
-      <div className="bottom__body">{tab === "log" ? <SessionLog events={events} t={t} language={language} /> : <Publication plan={plan} t={t} />}</div>
+      <div className="bottom__body">{tab === "log" ? <SessionLog events={events} t={t} language={language} /> : <Publication plan={plan} planError={planError} t={t} />}</div>
     </section>
   );
 }

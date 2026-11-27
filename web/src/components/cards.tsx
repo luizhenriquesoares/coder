@@ -9,7 +9,7 @@ export interface CardContext {
   readonly state: SessionState;
   readonly t: Strings;
   readonly language: Language;
-  /** Decisions close once the review is published. */
+  /** Decisions open when the council concludes and close when a publication starts (`decisionsOpen`). */
   readonly readOnly: boolean;
   onDecide(kind: "finding" | "patch", id: string, action: "accept" | "dismiss"): void;
   onSelectFinding(id: string): void;
