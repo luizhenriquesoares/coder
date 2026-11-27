@@ -155,8 +155,10 @@ export class GitHubSourceControl implements SourceControl {
         per_page: 1,
       });
       return data.merge_base_commit.sha;
-    } catch {
-      return baseSha;
+    } catch (error) {
+      // GitHub cannot compare some histories (a force-pushed or unrelated base): the base tip is the next best side.
+      if (statusOf(error) === 404) return baseSha;
+      throw error;
     }
   }
 

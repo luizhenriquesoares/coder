@@ -142,6 +142,9 @@ export class ConductReview {
         partial.changeSet,
         partial.risk.reviewOrder,
       );
+      for (const file of diffOnly.filter((candidate) => candidate.reason === "unreadable")) {
+        this.deps.logger.warn("Reviewers will see only the diff of a file that could not be read", { sessionId: session.id, path: file.path, error: file.error });
+      }
       const context: ReviewContext = { ...partial, headContents: contents, diffOnly };
       const protocol = new Protocol(session, agents, context, save, this.deps.logger, this.clock, this.deadlineMs);
       await protocol.opening();

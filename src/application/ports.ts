@@ -73,14 +73,24 @@ export interface SourceControl {
 
 // ── Model Gateway: the council's reviewer agents ──────────────────────────
 
+export type DiffOnlyReason = "binary" | "removed" | "over_budget" | "unreadable";
+
+/** A changed file whose head version reviewers do not get to read. */
+export interface DiffOnlyFile {
+  readonly path: string;
+  readonly reason: DiffOnlyReason;
+  /** Why it could not be read, for `unreadable`. */
+  readonly error?: string;
+}
+
 /** Everything a reviewer may look at. */
 export interface ReviewContext {
   readonly snapshot: PullRequestSnapshot;
   readonly changeSet: ChangeSet;
   readonly risk: RiskProfile;
   readonly headContents: HeadContents;
-  /** Files reviewers can only see as a diff (binary, removed or over the content budget). */
-  readonly diffOnly: readonly string[];
+  /** Files reviewers can only see as a diff, and why. */
+  readonly diffOnly: readonly DiffOnlyFile[];
   readonly language: Language;
 }
 

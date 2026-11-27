@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ConductReview, MAX_CONCURRENT_REVIEWS } from "../src/application/ConductReview.js";
-import { silentLogger } from "../src/application/ports.js";
+import { silentLogger, type Logger } from "../src/application/ports.js";
 import { PullRequestCatalog } from "../src/application/PullRequestCatalog.js";
 import { SessionRepository } from "../src/application/SessionRepository.js";
 import { InMemoryEventBus } from "../src/infrastructure/bus/InMemoryEventBus.js";
@@ -17,15 +17,15 @@ const pullRequests: DemoPullRequest[] = Array.from({ length: 6 }, (_, index) => 
 }));
 const refOf = (index: number) => pullRequests[index]!.ref;
 
-function conductReview(pace: Pace, reviewerDeadlineMs?: number) {
+function conductReview(pace: Pace, reviewerDeadlineMs?: number, options: { source?: DemoSourceControl; logger?: Logger } = {}) {
   const sessions = new SessionRepository(new InMemoryEventStore(), new InMemoryEventBus());
-  const catalog = new PullRequestCatalog(new Map([["demo", new DemoSourceControl(pullRequests)]]));
+  const catalog = new PullRequestCatalog(new Map([["demo", options.source ?? new DemoSourceControl(pullRequests)]]));
   let id = 0;
   const reviews = new ConductReview({
     catalog,
     councils: [new ScriptedCouncil(pace, pullRequests)],
     sessions,
-    logger: silentLogger,
+    logger: options.logger ?? silentLogger,
     newId: () => `S-${++id}`,
     ...(reviewerDeadlineMs ? { reviewerDeadlineMs } : {}),
   });
@@ -63,5 +63,21 @@ describe("ConductReview", () => {
     const { sessionId } = await reviews.start({ ref: refOf(0), language: "en", trigger: "manual" });
     await reviews.interruptRunning("The server stopped.");
     expect(await reviews.sessions.state(sessionId)).toMatchObject({ status: "failed", failureReason: "The server stopped." });
+  });
+
+  it("logs, with the session, a file reviewers could only see as a diff because it could not be read", async () => {
+    const unreadable = pullRequests[0]!.files.find((file) => file.head !== null)!.path;
+    const source = new (class extends DemoSourceControl {
+      override async getFileContents(snapshot: Parameters<DemoSourceControl["getFileContents"]>[0], path: string) {
+        if (path === unreadable) throw new Error("disk on fire");
+        return super.getFileContents(snapshot, path);
+      }
+    })(pullRequests);
+    const warnings: Record<string, unknown>[] = [];
+    const logger: Logger = { ...silentLogger, warn: (message, data) => void (message.startsWith("Reviewers will see only the diff") && warnings.push(data ?? {})) };
+    const reviews = conductReview(never, 30, { source, logger });
+    const { sessionId } = await reviews.start({ ref: refOf(0), language: "en", trigger: "manual" });
+    await reviews.whenSettled(sessionId);
+    expect(warnings).toEqual([{ sessionId, path: unreadable, error: "disk on fire" }]);
   });
 });

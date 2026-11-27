@@ -44,6 +44,8 @@ export interface FakeGitHub {
   rejectReview: (review: ReviewBody) => number | null;
   /** Fail the next request with this status (once). */
   failNext: { status: number; message: string } | null;
+  /** Fail every request whose path starts with this prefix (under the repository), with this status. */
+  failPath: { prefix: string; status: number } | null;
   close(): Promise<void>;
 }
 
@@ -97,6 +99,7 @@ export async function startFakeGitHub(owner: string, repo: string, pullRequests:
     reviewAttempts,
     rejectReview: () => null,
     failNext: null,
+    failPath: null,
     close: () =>
       new Promise((resolve) => {
         server.close(() => resolve());
@@ -127,6 +130,7 @@ export async function startFakeGitHub(owner: string, repo: string, pullRequests:
       }
       if (!path.startsWith(root)) return notFound();
       const rest = path.slice(root.length);
+      if (fake.failPath && rest.startsWith(fake.failPath.prefix)) return json(fake.failPath.status, { message: "Server Error" });
 
       const page = (items: readonly unknown[], path: string) => {
         const number = Number(query.page ?? 1);

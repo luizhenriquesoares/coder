@@ -126,6 +126,14 @@ describe("GitHub adapter against the REST API", () => {
     expect(changeSet.isCommentable("docs/old.md", 1)).toBe(false); // nothing on the new side
   });
 
+  it("falls back to the base tip only when GitHub cannot compare the commits", async () => {
+    const { source, github } = await connect();
+    github.failPath = { prefix: "/compare/", status: 404 };
+    expect((await source.getSnapshot(ref)).baseSha).toBe("base-tip");
+    github.failPath = { prefix: "/compare/", status: 500 };
+    await expect(source.getSnapshot(ref)).rejects.toThrow(/GitHub could not read acme\/shop#7/);
+  });
+
   it("reads both sides of a file at the right commits", async () => {
     const { source, github } = await connect();
     const snapshot = await source.getSnapshot(ref);

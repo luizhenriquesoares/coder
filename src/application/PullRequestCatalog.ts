@@ -1,7 +1,7 @@
 import { ChangeSet } from "../domain/change/ChangeSet.js";
 import { refKey, type FileContents, type Provider, type PullRequestRef, type PullRequestSnapshot } from "../domain/change/types.js";
 import { ApplicationError, describeError } from "./errors.js";
-import { summarize, type PullRequestSummary, type SourceControl } from "./ports.js";
+import { summarize, type DiffOnlyFile, type PullRequestSummary, type SourceControl } from "./ports.js";
 
 export interface CatalogListing {
   readonly items: readonly PullRequestSummary[];
@@ -16,8 +16,8 @@ export interface SummaryReading {
 
 export interface HeadContentsResult {
   readonly contents: ReadonlyMap<string, string>;
-  /** Files whose full content was not loaded (binary, removed, or over budget): reviewers see only their diff. */
-  readonly diffOnly: readonly string[];
+  /** Files whose full content was not loaded: reviewers see only their diff. */
+  readonly diffOnly: readonly DiffOnlyFile[];
 }
 
 export interface ContentBudget {
@@ -151,20 +151,29 @@ export class PullRequestCatalog {
     });
     const loaded = await mapWithConcurrency(reviewable, FETCH_CONCURRENCY, async (path) => {
       try {
-        return { path, text: (await this.fileContents(snapshot, path)).modified };
-      } catch {
-        return { path, text: null };
+        return { path, text: (await this.fileContents(snapshot, path)).modified, error: null };
+      } catch (error) {
+        return { path, text: null, error: describeError(error) };
       }
     });
 
     const contents = new Map<string, string>();
+    const unreadable = new Map<string, string>();
     let total = 0;
-    for (const { path, text } of loaded) {
+    for (const { path, text, error } of loaded) {
+      if (text === null) unreadable.set(path, error ?? "unknown error");
       if (text === null || text.length > budget.maxFileChars || total + text.length > budget.maxTotalChars) continue;
       contents.set(path, text);
       total += text.length;
     }
-    const diffOnly = changeSet.files.map((f) => f.path).filter((path) => !contents.has(path));
+    const diffOnly = changeSet.files
+      .filter((file) => !contents.has(file.path))
+      .map((file): DiffOnlyFile => {
+        if (file.status === "removed") return { path: file.path, reason: "removed" };
+        if (file.binary) return { path: file.path, reason: "binary" };
+        const error = unreadable.get(file.path);
+        return error === undefined ? { path: file.path, reason: "over_budget" } : { path: file.path, reason: "unreadable", error };
+      });
     return { contents, diffOnly };
   }
 }

@@ -1,5 +1,6 @@
 import type {
   DebateBrief,
+  DiffOnlyReason,
   ImplementationBrief,
   ReviewContext,
   VerdictBrief,
@@ -108,6 +109,7 @@ export function renderPullRequest(context: ReviewContext, boundary: string): str
   const { snapshot, changeSet, risk } = context;
   const { files, additions, deletions } = changeSet.stats;
   const riskByPath = new Map(risk.files.map((file) => [file.path, file]));
+  const diffOnlyReasons = new Map(context.diffOnly.map((file) => [file.path, file.reason]));
 
   const overview = changeSet.files
     .map((file) => {
@@ -133,7 +135,7 @@ export function renderPullRequest(context: ReviewContext, boundary: string): str
     overview,
     "</changed_files>",
     "",
-    ...changeSet.files.map((file) => renderFile(file, context.headContents.get(file.path), boundary)),
+    ...changeSet.files.map((file) => renderFile(file, context.headContents.get(file.path), diffOnlyReasons.get(file.path), boundary)),
     `</pull_request_${boundary}>`,
   ].join("\n");
 }
@@ -143,9 +145,16 @@ function escapeText(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
 }
 
-function renderFile(file: FileChange, head: string | undefined, boundary: string): string {
+const DIFF_ONLY_NOTE: Record<DiffOnlyReason, string> = {
+  binary: "binary file",
+  removed: "removed by this change",
+  over_budget: "too large to include",
+  unreadable: "could not be read",
+};
+
+function renderFile(file: FileChange, head: string | undefined, diffOnly: DiffOnlyReason | undefined, boundary: string): string {
   const renamed = file.previousPath ? ` previous_path="${escapeText(file.previousPath)}"` : "";
-  const note = head === undefined ? ' note="diff only"' : "";
+  const note = diffOnly ? ` note="diff only: ${DIFF_ONLY_NOTE[diffOnly]}"` : "";
   const parts = [`<file_${boundary} path="${escapeText(file.path)}" status="${file.status}"${renamed}${note}>`];
   if (file.hunks.length > 0) {
     parts.push("<diff>", file.hunks.map((hunk) => [hunk.header, ...hunk.lines.map(diffLine)].join("\n")).join("\n"), "</diff>");
