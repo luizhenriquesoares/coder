@@ -23,12 +23,25 @@ const only = (extension) => {
 
 /**
  * Inside an inline <script>, the HTML parser reacts to "<!--", "<script" and
- * "</script" even when they sit in a JavaScript string. Writing their "<" as
- * the escape \x3C means the same thing to JavaScript (in strings, template
- * literals and regular expressions) and nothing to the HTML parser.
+ * "</script" even when they sit in a JavaScript string, and tools that wrap a
+ * fragment in a document look for tags such as "<html" or "<body" anywhere in
+ * the file. Writing the "<" of those sequences as the escape \x3C means the
+ * same thing to JavaScript (in strings, template literals and regular
+ * expressions) and nothing to anything that reads the file as HTML.
  */
+const HTML_SENSITIVE = /<(?=!--|!doctype|\/?(?:script|style|title|html|head|body)(?![a-z]))/gi;
+
+/**
+ * Characters that are legitimate inside the bundle's string literals but that
+ * editors, uploaders and validators tend to reject or silently alter in a
+ * text file: control characters, the byte order mark, the replacement
+ * character and the two Unicode line separators.
+ */
+const FRAGILE_CHARACTER = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u2028\u2029\uFEFF\uFFFD]/g;
+const asEscape = (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0").toUpperCase()}`;
+
 function safeForInlineScript(code) {
-  const escaped = code.replace(/<(?=!--|\/?script)/gi, "\\x3C");
+  const escaped = code.replace(HTML_SENSITIVE, "\\x3C").replace(FRAGILE_CHARACTER, asEscape);
   // If one of those sequences was code rather than a literal, the escape is a syntax error. Check.
   const scratch = mkdtempSync(join(tmpdir(), "coder-demo-"));
   try {
