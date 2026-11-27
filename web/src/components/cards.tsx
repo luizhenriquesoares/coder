@@ -2,7 +2,7 @@ import type { Finding, Language, Patch, Position, ReviewerId } from "../../../sr
 import { PERSONAS } from "../../../src/domain/deliberation/personas.js";
 import { isPublished, levelOf, type SessionState } from "../../../src/domain/deliberation/state.js";
 import type { Strings } from "../state/i18n.js";
-import { choiceFor, fileName, isSetAside, locationLabel, patchDiffLines, patchesFixing, type HumanChoice } from "../state/selectors.js";
+import { choiceFor, fileName, isSetAside, locationLabel, patchDiffLines, patchesFixing, publicationNote, type HumanChoice } from "../state/selectors.js";
 import { Avatar, Icon, LevelChip, RiskChip, SeverityMark } from "./primitives.js";
 
 export interface CardContext {
@@ -82,6 +82,12 @@ export function FindingCard({ finding, expanded, variant = "list", ...context }:
         <span className={`sev-text sev-text--${finding.severity}`}>{t.severity[finding.severity]}</span>
         <span>{t.category[finding.category]}</span>
         {level ? <LevelChip level={level} t={t} {...(consensus ? { tally: `${consensus.support.length}–${consensus.opposition.length}` } : {})} /> : null}
+        {choice ? (
+          <span className={`chip chip--choice chip--choice-${choice}`}>
+            <Icon name={choice === "accept" ? "check" : "x"} size={11} />
+            {choice === "accept" ? t.acceptedByYou : t.dismissedByYou}
+          </span>
+        ) : null}
         {variant === "list" ? (
           <button type="button" className="link finding__where" disabled={!finding.location.path} onClick={() => context.onShowInCode(finding)}>
             {locationLabel(finding, t.changeWide)}
@@ -139,9 +145,7 @@ export function FindingCard({ finding, expanded, variant = "list", ...context }:
           <footer className="finding__actions">
             <DecisionButtons choice={choice} disabled={context.readOnly} t={t} onChoose={(action) => context.onDecide("finding", finding.id, action)} />
             {settled ? (
-              <span className={`publish-state${isPublished(state, finding) ? " is-yes" : ""}`}>
-                {choice === "accept" ? t.acceptedByYou : choice === "dismiss" ? t.dismissedByYou : isPublished(state, finding) ? t.willPublish : t.wontPublish}
-              </span>
+              <span className={`publish-state${isPublished(state, finding) ? " is-yes" : ""}`}>{t[publicationNote(state, finding)]}</span>
             ) : null}
           </footer>
         </div>

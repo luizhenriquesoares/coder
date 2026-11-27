@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Finding } from "../src/domain/deliberation/model.js";
 import { decisionKey, levelOf, type SessionState } from "../src/domain/deliberation/state.js";
-import { inboxErrorLines, isSetAside, locationLabel, patchDiffLines, stepThrough, toggleSelection } from "../web/src/state/selectors.js";
+import { inboxErrorLines, isSetAside, locationLabel, patchDiffLines, publicationNote, stepThrough, toggleSelection } from "../web/src/state/selectors.js";
 import { STRINGS } from "../web/src/state/i18n.js";
 import { concludedDemoSession } from "./support/demoSession.js";
 
@@ -46,6 +46,24 @@ describe("workspace view rules", () => {
     expect(isSetAside(state, endorsed)).toBe(false);
     expect(isSetAside(decided(state, endorsed.id, "dismiss"), endorsed)).toBe(true);
     expect(isSetAside(decided(state, rejected.id, "accept"), rejected)).toBe(false);
+  });
+
+  it("says what will be published while the review can still go out, and what was published once it has", async () => {
+    const { state } = await concludedDemoSession();
+    const withLevel = (level: string) => state.findings.find((finding) => levelOf(state, finding) === level)!;
+    const [endorsed, contested, rejected] = [withLevel("endorsed"), withLevel("contested"), withLevel("rejected")];
+    expect(publicationNote(state, endorsed)).toBe("willPublish");
+    expect(publicationNote(state, contested)).toBe("wontPublish");
+    expect(publicationNote(decided(state, endorsed.id, "dismiss"), endorsed)).toBe("wontPublish");
+    expect(publicationNote(decided(state, contested.id, "accept"), contested)).toBe("willPublish");
+
+    const published: SessionState = {
+      ...decided(state, contested.id, "accept"),
+      publication: { url: "https://example.test/review/1", decision: "request_changes", inlineComments: 1, summaryFindings: 0, simulated: true, at: state.startedAt },
+    };
+    expect(publicationNote(published, endorsed)).toBe("published");
+    expect(publicationNote(published, contested)).toBe("published");
+    expect(publicationNote(published, rejected)).toBe("notPublished");
   });
 });
 

@@ -1,6 +1,6 @@
 import type { FileChange, PullRequestRef } from "../../../src/domain/change/types.js";
 import type { ConsensusLevel, Finding, Patch, Severity } from "../../../src/domain/deliberation/model.js";
-import { decisionKey, levelOf, type SessionState } from "../../../src/domain/deliberation/state.js";
+import { decisionKey, isPublished, levelOf, type SessionState } from "../../../src/domain/deliberation/state.js";
 
 /** Pure views over the session state, shared by several panels. The rules themselves live in the domain. */
 
@@ -37,6 +37,15 @@ export function choiceFor(state: SessionState, kind: "finding" | "patch", id: st
 export function isSetAside(state: SessionState, finding: Pick<Finding, "id">): boolean {
   const choice = choiceFor(state, "finding", finding.id);
   return choice === "dismiss" || (choice === null && levelOf(state, finding) === "rejected");
+}
+
+export type PublicationNote = "willPublish" | "wontPublish" | "published" | "notPublished";
+
+/** What a finding's card says about publication: the plan while the review can still go out, the fact once it has. */
+export function publicationNote(state: SessionState, finding: Pick<Finding, "id">): PublicationNote {
+  const included = isPublished(state, finding);
+  if (state.publication !== null) return included ? "published" : "notPublished";
+  return included ? "willPublish" : "wontPublish";
 }
 
 /** The next item after `currentId` in `direction`, wrapping around at both ends; from no current item, the first or the last. */
