@@ -4,7 +4,7 @@ import { refKey, type FileContents, type PullRequestRef, type PullRequestSnapsho
 import type { DomainEvent } from "../domain/deliberation/events.js";
 import { DomainError } from "../domain/deliberation/model.js";
 import { planPublication, type PublicationPlan } from "../domain/deliberation/publicationPlanner.js";
-import { levelOf, type SessionState } from "../domain/deliberation/state.js";
+import { decisionsOpen, levelOf, type SessionState } from "../domain/deliberation/state.js";
 import type {
   AppConfig,
   CoderApi,
@@ -16,8 +16,16 @@ import type {
   StartReviewOptions,
 } from "./api.js";
 import type { ConductReview } from "./ConductReview.js";
-import { ApplicationError } from "./errors.js";
-import { summarize, type EventBus, type EventStore, type PullRequestSummary, type Unsubscribe, type Watchlist } from "./ports.js";
+import { ApplicationError, describeError } from "./errors.js";
+import {
+  summarize,
+  type EventBus,
+  type EventStore,
+  type PublishedReview,
+  type PullRequestSummary,
+  type Unsubscribe,
+  type Watchlist,
+} from "./ports.js";
 import type { PullRequestCatalog } from "./PullRequestCatalog.js";
 import type { SessionRepository } from "./SessionRepository.js";
 
@@ -38,8 +46,6 @@ const SHORT_PR_REF = /^([\w.-]+)\/([\w.-]+)#(\d+)$/;
 
 /** Application service implementing the API for every delivery mechanism. */
 export class CoderApplication implements CoderApi {
-  private readonly publishing = new Set<string>();
-
   constructor(private readonly deps: CoderApplicationDeps) {}
 
   async config(): Promise<AppConfig> {
@@ -133,7 +139,10 @@ export class CoderApplication implements CoderApi {
 
   async decide(sessionId: string, decision: DecisionInput): Promise<SessionState> {
     const session = await this.deps.sessions.get(sessionId);
-    asInvalidRequest(() => session.recordHumanDecision({ ...decision, by: this.deps.reviewerName }));
+    const record = () => session.recordHumanDecision({ ...decision, by: this.deps.reviewerName });
+    // Closed decisions conflict with the session's state; anything else wrong is the request's fault.
+    if (decisionsOpen(session.state)) asInvalidRequest(record);
+    else asConflict(record);
     await this.deps.sessions.save(session);
     return session.state;
   }
@@ -145,27 +154,38 @@ export class CoderApplication implements CoderApi {
   }
 
   async publish(sessionId: string): Promise<SessionState> {
-    const session = await this.deps.sessions.get(sessionId);
+    const { sessions, catalog } = this.deps;
+    const session = await sessions.get(sessionId);
     asConflict(() => session.assertPublishable());
-    // Publishing talks to the outside world: a second click must not post a second review.
-    if (this.publishing.has(sessionId)) throw new ApplicationError("conflict", "This review is already being published");
-    this.publishing.add(sessionId);
+    const snapshot = await this.reviewedSnapshot(session.state);
+    const plan = planPublication(session.state, ChangeSet.fromSnapshot(snapshot));
+
+    // The intent is durable before the outside world is touched: a second click, or a decision, now meets a conflict.
+    asConflict(() => session.startPublication());
     try {
-      const snapshot = await this.reviewedSnapshot(session.state);
-      const plan = planPublication(session.state, ChangeSet.fromSnapshot(snapshot));
-      const published = await this.deps.catalog.source(snapshot.ref.provider).publishReview(snapshot, plan);
-      session.recordPublication({
-        url: published.url,
-        decision: published.decision,
-        inlineComments: published.inlineComments,
-        summaryFindings: plan.summaryFindings,
-        simulated: published.simulated,
-      });
-      await this.deps.sessions.save(session);
-      return session.state;
-    } finally {
-      this.publishing.delete(sessionId);
+      await sessions.save(session);
+    } catch (error) {
+      session.failPublication(describeError(error));
+      throw error;
     }
+
+    let published: PublishedReview;
+    try {
+      published = await catalog.source(snapshot.ref.provider).publishReview(snapshot, plan);
+    } catch (error) {
+      session.failPublication(describeError(error));
+      await sessions.save(session);
+      throw error;
+    }
+    session.recordPublication({
+      url: published.url,
+      decision: published.decision,
+      inlineComments: published.inlineComments,
+      summaryFindings: plan.summaryFindings,
+      simulated: published.simulated,
+    });
+    await sessions.save(session);
+    return session.state;
   }
 
   /** A review is published against the commit it reviewed, never a newer one. */

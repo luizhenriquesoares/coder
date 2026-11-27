@@ -190,6 +190,8 @@ const en = {
     ReviewSessionConcluded: "Session concluded",
     ReviewSessionFailed: "Session failed",
     HumanDecisionRecorded: "Human decision",
+    PublicationStarted: "Publication started",
+    PublicationFailed: "Publication failed",
     ReviewPublished: "Review published",
   } satisfies Record<DomainEventType, string>,
 
@@ -399,6 +401,8 @@ const pt: Strings = {
     ReviewSessionConcluded: "Sessão concluída",
     ReviewSessionFailed: "Sessão falhou",
     HumanDecisionRecorded: "Decisão humana",
+    PublicationStarted: "Publicação iniciada",
+    PublicationFailed: "Publicação falhou",
     ReviewPublished: "Revisão publicada",
   },
 

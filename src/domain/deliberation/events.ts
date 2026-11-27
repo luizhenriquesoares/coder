@@ -92,6 +92,10 @@ export type ReviewPublished = EventEnvelope<
   }
 >;
 
+/** A publication was started: its outcome is unknown until it is published or failed. */
+export type PublicationStarted = EventEnvelope<"PublicationStarted", Record<string, never>>;
+export type PublicationFailed = EventEnvelope<"PublicationFailed", { readonly reason: string }>;
+
 export type DomainEvent =
   | ReviewSessionConvened
   | RoundStarted
@@ -107,6 +111,8 @@ export type DomainEvent =
   | ReviewSessionConcluded
   | ReviewSessionFailed
   | HumanDecisionRecorded
+  | PublicationStarted
+  | PublicationFailed
   | ReviewPublished;
 
 export type DomainEventType = DomainEvent["type"];

@@ -69,6 +69,10 @@ export interface SessionState {
   readonly verdict: Verdict | null;
   readonly decisions: Readonly<Record<string, HumanDecision>>;
   readonly publication: Publication | null;
+  /** A publication was started and has no outcome yet. */
+  readonly publishing: boolean;
+  /** Why the last publication attempt failed. */
+  readonly publicationFailure: string | null;
   readonly usage: Usage;
   readonly startedAt: string;
   readonly endedAt: string | null;
@@ -84,6 +88,11 @@ export function levelOf(state: Pick<SessionState, "consensus">, finding: Pick<Fi
 
 export function decisionKey(target: HumanDecision["target"]): string {
   return `${target.kind}:${target.id}`;
+}
+
+/** Whether a human may still record a decision: the council has concluded, and nothing was published or is being published. */
+export function decisionsOpen(state: Pick<SessionState, "status" | "publication" | "publishing">): boolean {
+  return state.status === "concluded" && state.publication === null && !state.publishing;
 }
 
 /** The publication rule: a finding is published when a human accepted it, or when the council endorsed it and no human dismissed it. */
@@ -127,6 +136,8 @@ function initialState(event: Extract<DomainEvent, { type: "ReviewSessionConvened
     verdict: null,
     decisions: {},
     publication: null,
+    publishing: false,
+    publicationFailure: null,
     usage: ZERO_USAGE,
     startedAt: event.at,
     endedAt: null,
@@ -204,8 +215,12 @@ function transition(state: SessionState, event: DomainEvent): SessionState {
       const { decision } = event.payload;
       return { ...state, decisions: { ...state.decisions, [decisionKey(decision.target)]: decision } };
     }
+    case "PublicationStarted":
+      return { ...state, publishing: true, publicationFailure: null };
+    case "PublicationFailed":
+      return { ...state, publishing: false, publicationFailure: event.payload.reason };
     case "ReviewPublished":
-      return { ...state, publication: { ...event.payload, at: event.at } };
+      return { ...state, publishing: false, publication: { ...event.payload, at: event.at } };
   }
 }
 

@@ -16,6 +16,7 @@ import { StatusBar } from "./components/StatusBar.js";
 import { TitleBar } from "./components/TitleBar.js";
 import type { EditorTheme } from "./editor/monaco.js";
 import { STRINGS } from "./state/i18n.js";
+import { decisionsOpen } from "../../src/domain/deliberation/state.js";
 import { choiceFor, findingsInReadingOrder } from "./state/selectors.js";
 import { useMediaQuery, useStoredFlag } from "./state/useUi.js";
 import { useWorkspace } from "./state/useWorkspace.js";
@@ -114,13 +115,13 @@ export function App({ workspace, language, onLanguageChange, theme, onToggleThem
     setDemoSpeed(value);
   };
 
-  const decisionsOpen = session !== null && session.status === "concluded" && session.publication === null;
+  const canDecide = session !== null && decisionsOpen(session);
   const cards: CardContext | null = session
     ? {
         state: session,
         t,
         language,
-        readOnly: !decisionsOpen,
+        readOnly: !canDecide,
         onDecide: decide,
         onSelectFinding: selectFinding,
         onShowInCode: showInCode,
@@ -146,8 +147,8 @@ export function App({ workspace, language, onLanguageChange, theme, onToggleThem
       const handlers: Record<string, () => void> = {
         n: () => stepFinding(1),
         p: () => stepFinding(-1),
-        a: () => decisionsOpen && selectedFindingId && decide("finding", selectedFindingId, "accept"),
-        d: () => decisionsOpen && selectedFindingId && decide("finding", selectedFindingId, "dismiss"),
+        a: () => canDecide && selectedFindingId && decide("finding", selectedFindingId, "accept"),
+        d: () => canDecide && selectedFindingId && decide("finding", selectedFindingId, "dismiss"),
         o: showOverview,
         l: () => setBottom((open) => (open === "log" ? null : "log")),
         "?": () => setShowShortcuts((open) => !open),

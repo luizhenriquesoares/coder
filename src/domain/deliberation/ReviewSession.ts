@@ -25,7 +25,7 @@ import {
 } from "./model.js";
 import { locateSnippet, replacementLinesAt } from "./patching.js";
 import { PERSONAS, COUNCIL_ORDER } from "./personas.js";
-import { decisionKey, evolve, foldEvents, type SessionState } from "./state.js";
+import { decisionKey, decisionsOpen, evolve, foldEvents, type SessionState } from "./state.js";
 import { applyVerdictPolicy, type VerdictDraft } from "./verdictPolicy.js";
 
 export interface ConveneCommand {
@@ -261,19 +261,39 @@ export class ReviewSession {
       kind === "finding" ? this.current.findings.some((f) => f.id === id) : this.current.patches.some((p) => p.id === id);
     if (!exists) throw new DomainError(`Unknown ${kind} ${id}`);
     if (this.current.decisions[decisionKey(decision.target)]?.action === decision.action) return; // idempotent
-    if (this.current.publication) throw new DomainError("This review was already published; its decisions are closed");
+    if (!decisionsOpen(this.current)) {
+      if (this.current.publication) throw new DomainError("This review was already published; its decisions are closed");
+      if (this.current.publishing) throw new DomainError("This review is being published; its decisions are closed");
+      throw new DomainError("Decisions open once the council has concluded");
+    }
     this.record("HumanDecisionRecorded", { decision });
+  }
+
+  /**
+   * Publishing talks to the outside world, so its intent is recorded first:
+   * from here until it is published or failed, decisions are closed and no
+   * second publication can start.
+   */
+  startPublication(): void {
+    this.assertPublishable();
+    this.record("PublicationStarted", {});
+  }
+
+  failPublication(reason: string): void {
+    if (!this.current.publishing) throw new DomainError("No publication is in progress");
+    this.record("PublicationFailed", { reason });
   }
 
   /** A review is published once: what the pull request author reads must not change under them. */
   recordPublication(publication: PublicationRecord): void {
-    this.assertPublishable();
+    if (!this.current.publishing) throw new DomainError("A publication is recorded only after it was started");
     this.record("ReviewPublished", publication);
   }
 
   assertPublishable(): void {
     if (this.current.status !== "concluded") throw new DomainError("Only a concluded review can be published");
     if (this.current.publication) throw new DomainError("This review was already published");
+    if (this.current.publishing) throw new DomainError("This review is already being published");
   }
 
   // ── Invariants ──────────────────────────────────────────────────────────

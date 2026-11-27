@@ -200,8 +200,11 @@ describe("ReviewSession protocol", () => {
 
   it("records human decisions idempotently and rejects unknown targets", () => {
     const session = debated("major", { architect: "agree" });
-    session.pullPendingEvents();
     const decision = { target: { kind: "finding", id: "F-1" }, action: "dismiss", by: "luiz" } as const;
+    expect(() => session.recordHumanDecision(decision)).toThrow(/once the council has concluded/);
+    session.issueVerdict("moderator", { decision: "comment", mergeRisk: "low", summary: "s", humanAttention: [] });
+    session.conclude();
+    session.pullPendingEvents();
     session.recordHumanDecision(decision);
     session.recordHumanDecision(decision);
     expect(session.pullPendingEvents()).toHaveLength(1);

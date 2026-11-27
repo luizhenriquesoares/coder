@@ -240,7 +240,7 @@ describe("live mode over HTTP", () => {
     expect((await call(`/api/sessions/${sessionId}/publish`, { method: "POST" })).status).toBe(409);
     expect(github.reviewAttempts).toHaveLength(1);
     const late = await call(`/api/sessions/${sessionId}/decisions`, { method: "POST", body: JSON.stringify({ target: { kind: "finding", id: "F-1" }, action: "dismiss" }) });
-    expect(late.status).toBe(400);
+    expect(late.status).toBe(409); // closed decisions conflict with the session's state
 
     // The inbox now knows this pull request was reviewed.
     const after = (await call<Inbox>("/api/pulls")).body;

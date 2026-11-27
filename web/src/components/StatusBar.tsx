@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Finding, Language } from "../../../src/domain/deliberation/model.js";
-import type { SessionState } from "../../../src/domain/deliberation/state.js";
+import { decisionsOpen, type SessionState } from "../../../src/domain/deliberation/state.js";
 import { formatCost, formatDuration, formatTokens } from "../state/format.js";
 import type { Strings } from "../state/i18n.js";
 import { consensusCounts, LEVEL_ORDER, type HumanChoice } from "../state/selectors.js";
@@ -39,7 +39,7 @@ export function StatusBar({ t, language, session, selectedFinding, selectedChoic
   const label = { idle: t.statusIdle, in_progress: t.statusInSession, concluded: t.statusConcluded, failed: t.statusFailed }[status];
   const counts = session ? consensusCounts(session) : null;
   const tokens = session ? session.usage.inputTokens + session.usage.outputTokens : 0;
-  const decisionsOpen = session?.status === "concluded" && !session.publication;
+  const canDecide = session !== null && decisionsOpen(session);
 
   return (
     <footer className="statusbar">
@@ -59,7 +59,7 @@ export function StatusBar({ t, language, session, selectedFinding, selectedChoic
         <span className="statusbar__item statusbar__hint">
           {selectedFinding.id}
           {selectedChoice === "accept" ? ` · ${t.acceptedByYou}` : selectedChoice === "dismiss" ? ` · ${t.dismissedByYou}` : ""}
-          {decisionsOpen ? (
+          {canDecide ? (
             <>
               <kbd>a</kbd> {t.accept} <kbd>d</kbd> {t.dismiss}
             </>

@@ -57,6 +57,10 @@ function describe(event: DomainEvent, t: Strings, language: Language): string {
       const { decision } = event.payload;
       return `${decision.by} · ${t[decision.action].toLowerCase()} ${decision.target.id}`;
     }
+    case "PublicationStarted":
+      return "";
+    case "PublicationFailed":
+      return event.payload.reason;
     case "ReviewPublished":
       return `${event.payload.decision.toUpperCase()} · ${event.payload.inlineComments} ${t.inlineComments.toLowerCase()}${event.payload.simulated ? ` · ${t.simulated}` : ""}`;
   }
