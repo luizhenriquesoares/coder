@@ -79,7 +79,7 @@ function PullRequests({ t, language, config, inbox, selected, onSelectPullReques
   return (
     <section className="panel">
       <PanelHead title={t.viewPulls} note={inbox ? String(inbox.items.length) : undefined} />
-      {config.mode === "server" && config.github.configured ? (
+      {config.mode === "server" ? (
         <form className="import" onSubmit={(event) => void submit(event)}>
           <input
             type="url"

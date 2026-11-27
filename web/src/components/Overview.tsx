@@ -43,7 +43,10 @@ export function Overview({ t, language, config, detail, session, stale, convenin
           </p>
           <h1 className="prhead__title">{pullRequest.title}</h1>
           <p className="prhead__merge">
-            {t.wantsToMerge(pullRequest.author.login, pullRequest.headBranch, pullRequest.baseBranch)}
+            <span>{t.wantsToMerge(pullRequest.author.login, pullRequest.headBranch, pullRequest.baseBranch)}</span>
+            <span className="prhead__size">
+              {t.files(stats.files)} <DiffStat additions={stats.additions} deletions={stats.deletions} />
+            </span>
             {pullRequest.ref.provider === "github" ? (
               <a className="link prhead__link" href={pullRequest.url} target="_blank" rel="noreferrer">
                 {t.viewOnGitHub}
@@ -67,9 +70,7 @@ export function Overview({ t, language, config, detail, session, stale, convenin
           <div className="metric">
             <dt>{t.humanReview}</dt>
             <dd className="metric__value">{t.minutes(risk.estimatedHumanReviewMinutes)}</dd>
-            <dd className="metric__note">
-              {t.humanReviewNote} · {t.files(stats.files)} <DiffStat additions={stats.additions} deletions={stats.deletions} />
-            </dd>
+            <dd className="metric__note">{t.humanReviewNote}</dd>
           </div>
           <div className="metric metric--council">
             <dt>{t.councilSession}</dt>

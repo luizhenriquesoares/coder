@@ -277,6 +277,7 @@ export function App({ workspace, language, onLanguageChange, theme, onToggleThem
                 onDiffMode={setDiffMode}
                 selectedFindingId={selectedFindingId}
                 onSelectFinding={setSelectedFindingId}
+                compact={singlePane}
               />
             ) : (
               <Overview

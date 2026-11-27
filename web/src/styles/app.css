@@ -2,6 +2,7 @@
 
 .shell {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr) auto auto;
   height: 100%;
   overflow: hidden;
@@ -1009,10 +1010,15 @@
   min-height: 0;
 }
 .fileview__docked {
-  max-height: 46%;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--line);
+  max-height: 52%;
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--line-strong);
+  background: var(--bg-panel);
   overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.fileview__docked .finding--inline {
+  box-shadow: none;
 }
 .filebar {
   display: flex;
@@ -1159,9 +1165,16 @@
 .prhead__merge {
   display: flex;
   flex-wrap: wrap;
+  align-items: baseline;
   gap: 4px 14px;
   margin: 8px 0 0;
   color: var(--fg-muted);
+}
+.prhead__size {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  white-space: nowrap;
 }
 
 .metrics {

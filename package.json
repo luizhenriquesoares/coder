@@ -13,12 +13,12 @@
     "dev:web": "vite",
     "build": "npm run build:web && npm run build:api",
     "build:web": "vite build",
-    "build:standalone": "vite build --mode standalone",
     "build:api": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p web/tsconfig.json --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "build:demo": "vite build --mode standalone && node scripts/package-demo.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.14.0",

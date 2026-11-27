@@ -30,6 +30,8 @@ export interface FileViewProps {
   onDiffMode(mode: DiffMode): void;
   readonly selectedFindingId: string | null;
   onSelectFinding(id: string | null): void;
+  /** A narrow editor: the selected finding's card docks under the code instead of opening inside it. */
+  readonly compact: boolean;
 }
 
 type Loaded = { readonly contents: FileContents | null; readonly error: string | null };
@@ -98,6 +100,13 @@ export function FileView(props: FileViewProps) {
     if (next) props.onSelectFinding(next.id);
   };
   const toggleMarker = (id: string) => props.onSelectFinding(id === selectedFindingId ? null : id);
+
+  const card =
+    selected && cards && !patched ? (
+      <FindingCard {...cards} finding={selected} expanded variant="inline" onSelectFinding={() => props.onSelectFinding(null)} />
+    ) : undefined;
+  // Inside the code, under its line, when there is a line and room for it. Otherwise docked under the editor.
+  const docked = props.compact || selectedLine === null;
 
   return (
     <div className="fileview">
@@ -176,11 +185,6 @@ export function FileView(props: FileViewProps) {
             {t.backToDiff}
           </button>
         </p>
-      ) : selected && cards && selectedLine === null ? (
-        // A finding about the file as a whole has no line to sit under.
-        <div className="fileview__docked">
-          <FindingCard {...cards} finding={selected} expanded variant="inline" onSelectFinding={() => props.onSelectFinding(null)} />
-        </div>
       ) : null}
 
       <div className="fileview__editor">
@@ -201,14 +205,12 @@ export function FileView(props: FileViewProps) {
             markers={markers}
             selectedMarkerId={selectedLine === null ? null : selectedFindingId}
             onSelectMarker={toggleMarker}
-            inlineCard={
-              selected && cards && selectedLine !== null ? (
-                <FindingCard {...cards} finding={selected} expanded variant="inline" onSelectFinding={() => props.onSelectFinding(null)} />
-              ) : undefined
-            }
+            inlineCard={docked ? undefined : card}
           />
         )}
       </div>
+
+      {docked && card ? <div className="fileview__docked">{card}</div> : null}
     </div>
   );
 }
