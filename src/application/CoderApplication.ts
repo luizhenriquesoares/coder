@@ -112,8 +112,12 @@ export class CoderApplication implements CoderApi {
     };
   }
 
-  async fileContents(ref: PullRequestRef, path: string): Promise<FileContents> {
-    const snapshot = await this.deps.catalog.snapshot(ref);
+  async fileContents(ref: PullRequestRef, path: string, headSha?: string): Promise<FileContents> {
+    let snapshot = await this.deps.catalog.snapshot(ref);
+    if (headSha !== undefined && snapshot.headSha !== headSha) {
+      snapshot = await this.deps.catalog.snapshot(ref, { fresh: true }); // the cached one may be the stale side
+      if (snapshot.headSha !== headSha) throw new ApplicationError("conflict", "The pull request has new commits. Reload it.");
+    }
     if (!snapshot.files.some((file) => file.path === path)) {
       throw new ApplicationError("not_found", `${path} is not part of this pull request`);
     }

@@ -283,3 +283,20 @@ describe("HTTP errors", () => {
     expect(errors).toEqual([{ error: "config is broken", stack: expect.stringContaining("TypeError: config is broken") }]);
   });
 });
+
+describe("reading a file against the commit a session reviewed", () => {
+  it("answers the file at that commit, and a conflict once the pull request moved past it", async () => {
+    const { application } = createStandaloneApplication({ pace: instantPace });
+    const client = new HttpCoderApi(await serve(application), () => null);
+    const { pullRequest, files } = await client.pullRequest(STOREFRONT);
+    const path = files[0]!.path;
+
+    expect((await client.fileContents(STOREFRONT, path, pullRequest.headSha)).path).toBe(path);
+    await expect(client.fileContents(STOREFRONT, path, "an-older-commit")).rejects.toMatchObject({
+      status: 409,
+      code: "conflict",
+      message: "The pull request has new commits. Reload it.",
+    });
+    expect((await client.fileContents(STOREFRONT, path)).path).toBe(path); // without a sha: the current head
+  });
+});

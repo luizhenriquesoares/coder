@@ -54,6 +54,7 @@ const DecisionBody = z.object({
   action: z.enum(["accept", "dismiss"]),
   note: z.string().max(2000).optional(),
 });
+const FileQuery = z.object({ path: z.string().min(1), sha: z.string().min(1).max(100).optional() });
 const ImportBody = z.object({ url: z.string().min(1).max(500) });
 const SessionParams = z.object({ id: z.string().min(1).max(100) });
 
@@ -116,7 +117,10 @@ export async function buildHttpServer(options: HttpServerOptions): Promise<Fasti
       guarded.get("/pulls", () => api.inbox());
       guarded.post("/pulls/import", (request) => api.importPullRequest(parse(ImportBody, request.body).url));
       guarded.get(pull, (request) => api.pullRequest(refOf(request)));
-      guarded.get(`${pull}/file`, (request) => api.fileContents(refOf(request), parse(z.object({ path: z.string().min(1) }), request.query).path));
+      guarded.get(`${pull}/file`, (request) => {
+        const { path, sha } = parse(FileQuery, request.query);
+        return api.fileContents(refOf(request), path, sha);
+      });
       guarded.post(`${pull}/reviews`, (request) => api.startReview(refOf(request), parse(StartReviewBody, request.body ?? {})));
 
       guarded.get("/sessions/:id", (request) => api.session(parse(SessionParams, request.params).id));

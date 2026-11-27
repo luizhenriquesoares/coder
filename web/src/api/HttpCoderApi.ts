@@ -50,8 +50,9 @@ export class HttpCoderApi implements CoderApi {
     return this.request(pullPath(ref));
   }
 
-  fileContents(ref: PullRequestRef, path: string): Promise<FileContents> {
-    return this.request(`${pullPath(ref)}/file?path=${encodeURIComponent(path)}`);
+  fileContents(ref: PullRequestRef, path: string, headSha?: string): Promise<FileContents> {
+    const sha = headSha === undefined ? "" : `&sha=${encodeURIComponent(headSha)}`;
+    return this.request(`${pullPath(ref)}/file?path=${encodeURIComponent(path)}${sha}`);
   }
 
   startReview(ref: PullRequestRef, options: StartReviewOptions): Promise<{ sessionId: string }> {

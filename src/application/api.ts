@@ -85,7 +85,8 @@ export interface CoderApi {
   inbox(): Promise<Inbox>;
   importPullRequest(url: string): Promise<PullRequestRef>;
   pullRequest(ref: PullRequestRef): Promise<PullRequestDetail>;
-  fileContents(ref: PullRequestRef, path: string): Promise<FileContents>;
+  /** Both sides of a file. With `headSha`, refuses (conflict) when the pull request has moved past that commit. */
+  fileContents(ref: PullRequestRef, path: string, headSha?: string): Promise<FileContents>;
   startReview(ref: PullRequestRef, options: StartReviewOptions): Promise<{ sessionId: string }>;
   session(sessionId: string): Promise<SessionState>;
   /**
