@@ -4,7 +4,7 @@ import { refKey, type FileContents, type PullRequestRef, type PullRequestSnapsho
 import type { DomainEvent } from "../domain/deliberation/events.js";
 import { DomainError } from "../domain/deliberation/model.js";
 import { planPublication, type PublicationPlan } from "../domain/deliberation/publicationPlanner.js";
-import type { SessionState } from "../domain/deliberation/state.js";
+import { levelOf, type SessionState } from "../domain/deliberation/state.js";
 import type {
   AppConfig,
   CoderApi,
@@ -217,7 +217,7 @@ export function summarizeSession(state: SessionState): SessionSummary {
     decision: state.verdict?.decision ?? null,
     mergeRisk: state.verdict?.mergeRisk ?? null,
     findings: state.findings.length,
-    endorsedFindings: state.findings.filter((f) => state.consensus[f.id]?.level === "endorsed").length,
+    endorsedFindings: state.findings.filter((f) => levelOf(state, f) === "endorsed").length,
     patches: state.patches.length,
     published: state.publication !== null,
   };

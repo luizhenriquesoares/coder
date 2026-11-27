@@ -1,6 +1,8 @@
 import type { FileChange, PullRequestRef } from "../../../src/domain/change/types.js";
 import type { ConsensusLevel, Finding, Patch, Severity } from "../../../src/domain/deliberation/model.js";
-import { decisionKey, type SessionState } from "../../../src/domain/deliberation/state.js";
+import { decisionKey, levelOf, type SessionState } from "../../../src/domain/deliberation/state.js";
+
+export { levelOf };
 
 /** Pure views over the session state, shared by several panels. */
 
@@ -9,10 +11,6 @@ export const LEVEL_ORDER: readonly ConsensusLevel[] = ["endorsed", "contested", 
 
 export function sameRef(a: PullRequestRef | null, b: PullRequestRef | null): boolean {
   return a !== null && b !== null && a.provider === b.provider && a.owner === b.owner && a.repo === b.repo && a.number === b.number;
-}
-
-export function levelOf(state: SessionState, finding: Finding): ConsensusLevel | null {
-  return state.consensus[finding.id]?.level ?? null;
 }
 
 export type HumanChoice = "accept" | "dismiss" | null;

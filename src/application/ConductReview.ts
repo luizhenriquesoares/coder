@@ -5,8 +5,9 @@ import type { ReviewedPullRequest } from "../domain/deliberation/events.js";
 import { DomainError, PANELISTS, type Engine, type Language, type ReviewerId } from "../domain/deliberation/model.js";
 import { PERSONAS } from "../domain/deliberation/personas.js";
 import { MAX_FINDINGS_PER_REVIEWER, ReviewSession, type Clock } from "../domain/deliberation/ReviewSession.js";
+import { levelOf } from "../domain/deliberation/state.js";
+import { fallbackVerdict } from "../domain/deliberation/verdictPolicy.js";
 import { ApplicationError, describeError } from "./errors.js";
-import { fallbackVerdict } from "./fallbackVerdict.js";
 import type { Contribution, CouncilAgents, Logger, ReviewContext } from "./ports.js";
 import type { PullRequestCatalog } from "./PullRequestCatalog.js";
 import type { SessionRepository } from "./SessionRepository.js";
@@ -194,8 +195,9 @@ class Protocol {
 
   async implementation(): Promise<void> {
     this.session.startRound("implementation");
-    const { findings, positions, consensus } = this.session.state;
-    const worthFixing = findings.filter((f) => consensus[f.id]?.level !== "rejected");
+    const state = this.session.state;
+    const { findings, positions, consensus } = state;
+    const worthFixing = findings.filter((f) => levelOf(state, f) !== "rejected");
     if (worthFixing.length === 0) return this.save();
 
     await this.speak(

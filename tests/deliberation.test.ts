@@ -4,12 +4,22 @@ import { assessRisk } from "../src/domain/change/riskAssessment.js";
 import type { PullRequestSnapshot } from "../src/domain/change/types.js";
 import { anchorLocation } from "../src/domain/deliberation/codeAnchoring.js";
 import { computeConsensus } from "../src/domain/deliberation/consensusPolicy.js";
-import { DomainError, type Finding, type Position, type ReviewerId, type Stance } from "../src/domain/deliberation/model.js";
+import {
+  DomainError,
+  type ConsensusLevel,
+  type Decision,
+  type Finding,
+  type Language,
+  type Position,
+  type ReviewerId,
+  type Severity,
+  type Stance,
+} from "../src/domain/deliberation/model.js";
 import { applyPatches, applySnippetPatch, locateSnippet } from "../src/domain/deliberation/patching.js";
 import { planPublication } from "../src/domain/deliberation/publicationPlanner.js";
 import { MAX_FINDINGS_PER_REVIEWER, ReviewSession, type FindingDraft } from "../src/domain/deliberation/ReviewSession.js";
 import { foldEvents } from "../src/domain/deliberation/state.js";
-import { applyVerdictPolicy } from "../src/domain/deliberation/verdictPolicy.js";
+import { applyVerdictPolicy, boundDecision, fallbackVerdict, riskFloor } from "../src/domain/deliberation/verdictPolicy.js";
 
 const HEAD = ["export function total(items) {", "  let sum = 0;", "  for (const i of items) sum += i.price;", "  return sum;", "}"].join("\n");
 
@@ -244,6 +254,77 @@ describe("VerdictPolicy", () => {
   it("leaves a compliant verdict untouched", () => {
     const verdict = applyVerdictPolicy({ decision: "approve", mergeRisk: "medium", summary: "", humanAttention: [] }, [finding("F-1", "minor")], endorsed("F-1"));
     expect(verdict).toMatchObject({ decision: "approve", mergeRisk: "medium", overriddenByPolicy: false });
+  });
+});
+
+describe("the rules over the findings that stand", () => {
+  const standing = (...severities: Severity[]) => severities.map((severity, index) => ({ id: `F-${index + 1}`, severity }) as Finding);
+
+  it.each([
+    [[], "low"],
+    [["nit", "minor"], "low"],
+    [["minor", "major"], "medium"],
+    [["major", "blocker"], "high"],
+  ] as [Severity[], string][])("riskFloor(%j) is %s", (severities, floor) => {
+    expect(riskFloor(standing(...severities))).toBe(floor);
+  });
+
+  it.each([
+    ["approve", ["blocker"], "request_changes"],
+    ["approve", ["major"], "approve"],
+    ["approve", [], "approve"],
+    ["request_changes", ["blocker"], "request_changes"],
+    ["request_changes", ["major"], "request_changes"],
+    ["request_changes", ["minor", "nit"], "comment"],
+    ["request_changes", [], "comment"],
+    ["comment", ["blocker"], "comment"],
+    ["comment", [], "comment"],
+  ] as [Decision, Severity[], Decision][])("boundDecision(%s, %j) is %s", (proposed, severities, bound) => {
+    expect(boundDecision(proposed, standing(...severities))).toBe(bound);
+  });
+
+  it("turns a request for changes the endorsed findings do not ground into a comment", () => {
+    const consensus = { "F-1": { findingId: "F-1", level: "endorsed", support: [], opposition: [], refinements: [] } } as const;
+    const verdict = applyVerdictPolicy({ decision: "request_changes", mergeRisk: "low", summary: "", humanAttention: [] }, standing("minor"), consensus);
+    expect(verdict).toMatchObject({ decision: "comment", proposedDecision: "request_changes", overriddenByPolicy: true, mergeRisk: "low" });
+  });
+});
+
+describe("the fallback verdict, when the moderator cannot answer", () => {
+  const settled = (language: Language, ...findings: [Severity, ConsensusLevel][]) => ({
+    language,
+    findings: findings.map(([severity], index) => ({ id: `F-${index + 1}`, severity, title: `Finding ${index + 1}` }) as Finding),
+    consensus: Object.fromEntries(
+      findings.map(([, level], index) => [`F-${index + 1}`, { findingId: `F-${index + 1}`, level, support: [], opposition: [], refinements: [] }]),
+    ),
+  });
+
+  it("requests changes over an endorsed blocker or major", () => {
+    expect(fallbackVerdict(settled("en", ["blocker", "endorsed"]))).toMatchObject({ decision: "request_changes", mergeRisk: "high" });
+    expect(fallbackVerdict(settled("en", ["major", "endorsed"], ["nit", "rejected"]))).toMatchObject({ decision: "request_changes", mergeRisk: "medium" });
+  });
+
+  it("never approves a blocker nobody reviewed (a single panelist survived the opening)", () => {
+    const verdict = fallbackVerdict(settled("en", ["blocker", "unreviewed"], ["minor", "unreviewed"]));
+    expect(verdict).toMatchObject({ decision: "comment", mergeRisk: "medium", humanAttention: ["Unreviewed: Finding 1 (F-1)"] });
+    expect(verdict.summary).toBe(
+      "The moderator did not answer; this verdict was derived from the council's consensus: 0 endorsed findings (0 blockers, 0 major), 0 contested and 2 unreviewed.",
+    );
+  });
+
+  it("comments on findings that stand or are disputed, and lists the disputed ones for the human", () => {
+    expect(fallbackVerdict(settled("en", ["minor", "endorsed"]))).toMatchObject({ decision: "comment", mergeRisk: "low", humanAttention: [] });
+    expect(fallbackVerdict(settled("pt", ["major", "contested"]))).toMatchObject({
+      decision: "comment",
+      mergeRisk: "medium",
+      humanAttention: ["Em disputa: Finding 1 (F-1)"],
+    });
+  });
+
+  it("approves when nothing stands", () => {
+    expect(fallbackVerdict(settled("en"))).toMatchObject({ decision: "approve", mergeRisk: "low", humanAttention: [] });
+    expect(fallbackVerdict(settled("pt", ["blocker", "rejected"]))).toMatchObject({ decision: "approve", mergeRisk: "low" });
+    expect(fallbackVerdict(settled("pt")).summary).toMatch(/^O moderador não respondeu/);
   });
 });
 

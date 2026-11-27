@@ -5,6 +5,7 @@ import {
   addUsage,
   ZERO_USAGE,
   type Consensus,
+  type ConsensusLevel,
   type DeclinedFinding,
   type Engine,
   type Finding,
@@ -72,6 +73,11 @@ export interface SessionState {
   readonly durationMs: number | null;
   readonly failureReason: string | null;
   readonly lastSeq: number;
+}
+
+/** How the council settled a finding, or null before the debate settled anything. */
+export function levelOf(state: Pick<SessionState, "consensus">, finding: Pick<Finding, "id">): ConsensusLevel | null {
+  return state.consensus[finding.id]?.level ?? null;
 }
 
 export function decisionKey(target: HumanDecision["target"]): string {

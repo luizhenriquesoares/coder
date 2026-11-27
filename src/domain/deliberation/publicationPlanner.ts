@@ -1,7 +1,7 @@
 import type { ChangeSet } from "../change/ChangeSet.js";
 import type { Consensus, Finding, Language, Patch, Severity } from "./model.js";
 import { PERSONAS } from "./personas.js";
-import { decisionKey, type SessionState } from "./state.js";
+import { decisionKey, levelOf, type SessionState } from "./state.js";
 
 export type ReviewEvent = "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
 
@@ -75,7 +75,7 @@ export function planPublication(state: SessionState, changeSet: ChangeSet): Publ
 function isPublished(finding: Finding, state: SessionState): boolean {
   const decision = state.decisions[decisionKey({ kind: "finding", id: finding.id })];
   if (decision) return decision.action === "accept";
-  return state.consensus[finding.id]?.level === "endorsed";
+  return levelOf(state, finding) === "endorsed";
 }
 
 function isDismissed(state: SessionState, patchId: string): boolean {
