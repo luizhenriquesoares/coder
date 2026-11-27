@@ -87,7 +87,7 @@ Relationships:
 * **Change Intelligence → Review Deliberation**: Customer/Supplier. The
   deliberation consumes an immutable `ChangeSet` snapshot (a PR's new push
   is a *new* snapshot, never a mutation).
-* **Review Deliberation → Model Gateway**: the core owns the `ReviewerAgent`
+* **Review Deliberation → Model Gateway**: the core owns the `CouncilAgents`
   port; Claude is one implementation behind an ACL that maps our persona
   briefs to prompts and JSON schemas. A scripted implementation powers demo
   mode and tests.
@@ -171,25 +171,53 @@ discussion the human gets to read.
     2. A finding must be anchored to a file of the ChangeSet (or explicitly
        `general`); its line is re-anchored by quote when the model miscounts.
     3. A reviewer cannot take a position on its own finding.
-    4. A patch must reference at least one existing finding and its
-       `original` snippet must exist verbatim in the head version of the file.
+    4. A patch must reference at least one existing finding. Its `original`
+       snippet is located in the head version of the file, at the occurrence
+       nearest the findings it fixes. A patch whose snippet is missing or
+       ambiguous is still recorded, as `applicable: false`, and is never
+       previewed or published as a suggestion.
     5. A verdict can only be issued once and only after the implementation round.
-    6. **Policy override**: a verdict cannot `approve` while an *endorsed*
-       `blocker` exists (the moderator's opinion is constrained by consensus).
-    7. A human decision may override anything; it is recorded, never lost.
+    6. **Policy override**: the moderator's opinion is bounded by the
+       findings that stand. A verdict cannot `approve` while an *endorsed*
+       `blocker` exists, and cannot `request_changes` unless an endorsed
+       `blocker` or `major` grounds it (it becomes `comment`). The merge risk
+       is never lower than the endorsed findings imply.
+    7. A human decides once the council has concluded. A human decision may
+       override anything; it is recorded, never lost. The bound of invariant
+       6 is then applied again, to the findings that will actually be
+       published: accepting a contested blocker on an approved change
+       publishes `request_changes`, and dismissing the only grounds of a
+       `request_changes` publishes `comment`.
+    8. A review is published at most once, against the commit it reviewed.
+       The intent is recorded before the source-control system is called;
+       while a publication is in flight no decision is accepted, and an
+       attempt that fails or is interrupted is recorded as failed.
 * **Finding** (entity): `id` (F-1…), `author`, `severity`, `category`,
   `location {path, line, quote}`, `title`, `rationale`, `recommendation`,
   `principle` (named refactoring/principle).
 * **Position** (value object): `reviewer`, `findingId`, `stance`, `argument`.
 * **Patch** (entity): `id` (P-1…), `findingIds`, `path`, `original`,
-  `replacement`, `explanation`, `applicable`.
-* **Verdict** (value object): `decision`, `mergeRisk`, `summary`,
-  `humanAttention[]`, `overriddenByPolicy`.
+  `replacement`, `explanation`, `applicable`, the located `startLine` and
+  `endLine`, and `replacementLines`: the exact lines that replace that range.
+  The preview and the published suggestion are both made from them.
+* **Verdict** (value object): `decision`, `proposedDecision` (what the
+  moderator asked for), `mergeRisk`, `summary`, `humanAttention[]`,
+  `overriddenByPolicy`.
 * **ConsensusPolicy** (domain service): the author counts as an implicit
   `agree`; `refine` counts as qualified agreement.
-  `endorsed` if support ≥ 2 and support > opposition; `rejected` if
-  opposition > support; `contested` otherwise when anyone else spoke;
-  `unreviewed` if nobody else took a position.
+  `unreviewed` if nobody else took a position; `rejected` if opposition
+  outweighs support; `endorsed` if net support (support − opposition) is at
+  least 2; `contested` otherwise, which is where the human should look. With
+  two for and one against, a finding is contested.
+* **VerdictPolicy** (domain service): `boundDecision` and `riskFloor`, one
+  rule over "the findings that stand" (invariants 6 and 7). When the
+  moderator cannot answer, the verdict is derived from consensus alone, and
+  it never approves while a finding is endorsed, contested or unreviewed.
+* **Publication** (domain service): a finding is published when a human
+  accepted it, or when the council endorsed it and no human dismissed it. It
+  becomes an inline comment when its line was confirmed in the file and is
+  visible in the diff, and goes into the summary otherwise. The selection is
+  data (`selectPublication`); `planPublication` renders it.
 
 ### Review Workspace
 
@@ -201,20 +229,27 @@ discussion the human gets to read.
 ## 7. Domain events (published language)
 
 ```
-ReviewSessionConvened   {sessionId, pullRequest, changeSet summary, council, engine}
+ReviewSessionConvened   {pullRequest, council, engine, model, language, stats, risk, trigger}
 RoundStarted            {round}
 ReviewerStartedThinking {reviewer, round}
-StatementMade           {reviewer, round, text}
+StatementMade           {reviewer, round, text, durationMs, usage}
+ReviewerFailed          {reviewer, round, reason}
 FindingRaised           {finding}
 PositionTaken           {position}
-ConsensusComputed       {findingId, consensus, support, opposition}
+ConsensusComputed       {consensus[]}
 PatchProposed           {patch}
+FindingDeclined         {declined: {findingId, by, reason}}
 VerdictIssued           {verdict}
 ReviewSessionConcluded  {durationMs, usage}
 ReviewSessionFailed     {reason}
 HumanDecisionRecorded   {decision}
-ReviewPublished         {url, inlineComments, summaryOnly}
+PublicationStarted      {}
+PublicationFailed       {reason}
+ReviewPublished         {url, decision, inlineComments, summaryFindings, simulated}
 ```
+
+Every event also carries its `sessionId`, its position `seq` in the session's
+stream (starting at 1) and the time `at`.
 
 Events are the integration contract between the core and the workspace, they
 stream live to the UI (Server-Sent Events), and they make every review
@@ -231,11 +266,19 @@ auditable and replayable.
 4. **Consensus** — `ConsensusPolicy` classifies every finding (deterministic,
    no model involved).
 5. **Implementation round** — the Pragmatic Implementer writes patches for the
-   endorsed findings worth fixing now, and says which ones it rejects and why.
+   findings the council did not reject and that are worth fixing now, and
+   says which ones it declines and why.
 6. **Verdict** — the Moderator issues the verdict; `VerdictPolicy` enforces
-   invariant 6.
+   invariant 6. If the moderator cannot answer, the verdict is derived from
+   consensus alone.
 7. **Human decision & publication** — the human accepts/dismisses and
-   publishes to GitHub as a review with inline comments and suggestions.
+   publishes to GitHub as a review with inline comments and suggestions. The
+   published decision follows those decisions (invariant 7) and the review
+   goes out once (invariant 8).
+
+A reviewer that fails or does not answer within its deadline is recorded as
+failed and the round goes on; a session interrupted by a restart is recorded
+as failed when the service starts again, and can be convened again.
 
 ## 9. Out of scope for the MVP (next bets)
 

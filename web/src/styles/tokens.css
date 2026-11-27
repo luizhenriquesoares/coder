@@ -1,0 +1,165 @@
+/*
+ * Layout concept: a three-pane workbench. An explorer rail on the left, the
+ * diff on centre stage, the council chamber on the right. Chrome stays quiet
+ * and dense; what the council *says* is set in a serif, so the reviewers'
+ * voice reads apart from what the tool shows.
+ */
+
+@font-face {
+  font-family: "Inter Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("@fontsource-variable/inter/files/inter-latin-wght-normal.woff2") format("woff2-variations");
+}
+@font-face {
+  font-family: "Source Serif 4 Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 200 900;
+  src: url("@fontsource-variable/source-serif-4/files/source-serif-4-latin-wght-normal.woff2") format("woff2-variations");
+}
+@font-face {
+  font-family: "Source Serif 4 Variable";
+  font-style: italic;
+  font-display: swap;
+  font-weight: 200 900;
+  src: url("@fontsource-variable/source-serif-4/files/source-serif-4-latin-wght-italic.woff2") format("woff2-variations");
+}
+
+/* Dark is the first theme of an IDE. Every token is defined here; the light block only redefines. */
+.coder {
+  --bg-app: #0c0e13;
+  --bg-panel: #11141b;
+  --bg-editor: #151922;
+  --bg-raised: #1c212d;
+  --bg-active: #262d3d;
+  --line: #232836;
+  --line-strong: #343c50;
+  --fg: #e6e8ee;
+  --fg-soft: #b4bac8;
+  --fg-muted: #808899;
+  --fg-faint: #586073;
+  --accent: #7ea6ff;
+  --accent-strong: #5a86f2;
+  --accent-soft: rgb(126 166 255 / 0.14);
+  --on-accent: #0a1022;
+
+  /* Severity is a heat ramp; consensus has its own hues so the two never read as one scale. */
+  --blocker: #ff6b6b;
+  --major: #ffa24d;
+  --minor: #dcc36e;
+  --nit: #8891a5;
+  --endorsed: #4cc38a;
+  --contested: #b79bf5;
+  --rejected: #808899;
+  --added: #4cc38a;
+  --removed: #ff7b72;
+  --shadow: 0 12px 32px rgb(0 0 0 / 0.45);
+
+  --font-ui: "Inter Variable", Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-voice: "Source Serif 4 Variable", "Source Serif 4", Georgia, "Times New Roman", serif;
+  --font-code: ui-monospace, "SF Mono", "Cascadia Code", "Cascadia Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  --text-2xs: 0.6875rem; /* 11px labels */
+  --text-xs: 0.75rem; /* 12px dense chrome */
+  --text-sm: 0.8125rem; /* 13px default UI */
+  --text-md: 0.875rem; /* 14px reading */
+  --text-voice: 0.9375rem; /* 15px statements */
+  --text-lg: 1.125rem;
+  --text-xl: 1.5rem;
+  --text-2xl: 2rem;
+
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 10px;
+  color-scheme: dark;
+}
+
+.coder[data-theme="light"] {
+  --bg-app: #e9ecf1;
+  --bg-panel: #f4f5f8;
+  --bg-editor: #ffffff;
+  --bg-raised: #eaedf2;
+  --bg-active: #dce3f0;
+  --line: #dcdfe7;
+  --line-strong: #c2c9d6;
+  --fg: #171b26;
+  --fg-soft: #3d4555;
+  --fg-muted: #636c80;
+  --fg-faint: #98a0b2;
+  --accent: #2c5fd6;
+  --accent-strong: #234db3;
+  --accent-soft: rgb(44 95 214 / 0.1);
+  --on-accent: #ffffff;
+  --blocker: #cf3030;
+  --major: #c2620a;
+  --minor: #86690f;
+  --nit: #687184;
+  --endorsed: #1b8556;
+  --contested: #7347cf;
+  --rejected: #687184;
+  --added: #1b8556;
+  --removed: #cf3030;
+  --shadow: 0 12px 32px rgb(23 27 38 / 0.16);
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+html {
+  box-sizing: border-box; /* a host may pad the root for safe areas; stay inside the viewport */
+}
+
+body {
+  margin: 0;
+  background: #0c0e13;
+  overflow: hidden;
+}
+body:has(.coder[data-theme="light"]) {
+  background: #e9ecf1;
+}
+
+.coder {
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  color: var(--fg);
+  background: var(--bg-app);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "cv11", "ss03";
+}
+.coder *,
+.coder *::before,
+.coder *::after {
+  box-sizing: border-box;
+}
+/* :where keeps these resets at zero specificity, so any component class can restyle a control. */
+:where(.coder) :where(button, input, select) {
+  font: inherit;
+  color: inherit;
+}
+.coder :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.coder ::selection {
+  background: var(--accent-soft);
+}
+.coder * {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .coder *,
+  .coder *::before,
+  .coder *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
