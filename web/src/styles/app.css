@@ -522,7 +522,13 @@
   font-size: var(--text-xs);
 }
 .banner .icon {
+  flex: none;
   color: var(--accent);
+}
+/* The message keeps to its icon's line; an action that does not fit goes under it. */
+.banner > span {
+  flex: 1 1 24ch;
+  min-width: 0;
 }
 .banner--warn {
   border: 1px solid color-mix(in srgb, var(--major) 40%, transparent);
