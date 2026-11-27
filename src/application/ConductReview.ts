@@ -153,7 +153,11 @@ export class ConductReview {
       await protocol.verdict();
       session.conclude();
     } catch (error) {
-      this.deps.logger.error("Review session failed", { sessionId: session.id, error: describeError(error) });
+      this.deps.logger.error("Review session failed", {
+        sessionId: session.id,
+        error: describeError(error),
+        ...(error instanceof Error && !(error instanceof DomainError) ? { stack: error.stack } : {}),
+      });
       if (session.state.status === "in_progress") session.fail(describeError(error));
     }
     await save();
@@ -270,7 +274,9 @@ class Protocol {
   /**
    * Lets the given reviewers speak concurrently in the current round.
    * `ask` is the (slow) call to the agent; `record` applies its output to the
-   * aggregate. A reviewer that fails is recorded and the round goes on.
+   * aggregate. A reviewer whose call fails is recorded as failed and the round
+   * goes on. An error while recording is a defect of ours, not the reviewer's:
+   * the others finish and are recorded, then it fails the session.
    * Returns the contributions of those who spoke.
    */
   private async speak<C extends Contribution>(
@@ -282,25 +288,29 @@ class Protocol {
     await this.save();
 
     const spoke = new Map<ReviewerId, C>();
-    await Promise.all(
+    const outcomes = await Promise.allSettled(
       reviewers.map(async (reviewer) => {
         const startedAt = this.clock().getTime();
+        let contribution: C;
         try {
-          const contribution = await this.within(this.deadlineMs, (signal) => ask(reviewer, signal));
-          // Recording is synchronous, so each reviewer's events stay contiguous.
-          this.session.makeStatement(reviewer, contribution.statement, {
-            durationMs: this.clock().getTime() - startedAt,
-            usage: contribution.usage,
-          });
-          record(reviewer, contribution);
-          spoke.set(reviewer, contribution);
+          contribution = await this.within(this.deadlineMs, (signal) => ask(reviewer, signal));
         } catch (error) {
           this.logger.warn("Reviewer failed", { reviewer, error: describeError(error) });
-          this.failReviewer(reviewer, describeError(error));
+          this.session.reportFailure(reviewer, describeError(error));
+          return this.save();
         }
-        await this.save();
+        // Recording is synchronous, so each reviewer's events stay contiguous. A blank statement must not cost the findings.
+        this.session.makeStatement(reviewer, contribution.statement.trim() || "—", {
+          durationMs: this.clock().getTime() - startedAt,
+          usage: contribution.usage,
+        });
+        record(reviewer, contribution);
+        spoke.set(reviewer, contribution);
+        return this.save();
       }),
     );
+    const defect = outcomes.find((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected");
+    if (defect) throw defect.reason;
     return spoke;
   }
 
@@ -320,13 +330,6 @@ class Protocol {
     } finally {
       signal.removeEventListener("abort", onAbort);
     }
-  }
-
-  private failReviewer(reviewer: ReviewerId, reason: string): void {
-    const alreadySpoke = this.session.state.statements.some(
-      (s) => s.reviewer === reviewer && s.round === this.session.state.currentRound,
-    );
-    if (!alreadySpoke) this.session.reportFailure(reviewer, reason);
   }
 
   /** A single malformed item from a reviewer must not sink the whole contribution. */
