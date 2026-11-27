@@ -19,6 +19,11 @@ export function refKey(ref: PullRequestRef): string {
   return `${ref.provider}:${ref.owner}/${ref.repo}#${ref.number}`;
 }
 
+/** One commit of one pull request: what a review session reviews. */
+export function revisionKey(ref: PullRequestRef, headSha: string): string {
+  return `${refKey(ref)}@${headSha}`;
+}
+
 export function parseRefKey(key: string): PullRequestRef | null {
   const match = /^(github|demo):([^/\s]+)\/([^#\s]+)#(\d+)$/.exec(key);
   if (!match) return null;

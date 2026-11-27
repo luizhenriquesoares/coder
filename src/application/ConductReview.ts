@@ -1,6 +1,6 @@
 import { ChangeSet } from "../domain/change/ChangeSet.js";
 import { assessRisk } from "../domain/change/riskAssessment.js";
-import type { PullRequestRef, PullRequestSnapshot } from "../domain/change/types.js";
+import { revisionKey, type PullRequestRef, type PullRequestSnapshot } from "../domain/change/types.js";
 import type { ReviewedPullRequest } from "../domain/deliberation/events.js";
 import { DomainError, PANELISTS, type Engine, type Language, type ReviewerId } from "../domain/deliberation/model.js";
 import { PERSONAS } from "../domain/deliberation/personas.js";
@@ -28,12 +28,15 @@ export interface ConductReviewDeps {
   readonly clock?: Clock;
 }
 
+/** Each deliberation is up to ten paid model calls: a cap keeps a burst of requests from becoming a bill. */
+export const MAX_CONCURRENT_REVIEWS = 4;
+
 /**
  * Use case: convene the council on a pull request and run the deliberation
  * protocol (opening → debate → implementation → verdict). See docs/DOMAIN.md §8.
  */
 export class ConductReview {
-  private readonly running = new Map<string, Promise<void>>();
+  private readonly running = new Map<string, { readonly revision: string; readonly done: Promise<void> }>();
   private readonly clock: Clock;
 
   constructor(private readonly deps: ConductReviewDeps) {
@@ -44,6 +47,8 @@ export class ConductReview {
   async start(command: StartReviewCommand): Promise<{ sessionId: string }> {
     const { catalog, sessions, newId } = this.deps;
     const snapshot = await catalog.snapshot(command.ref, { fresh: true });
+    const revision = revisionKey(snapshot.ref, snapshot.headSha);
+    this.assertRoomFor(revision);
     const agents = this.selectCouncil(snapshot, command.engine);
     const changeSet = ChangeSet.fromSnapshot(snapshot);
     const risk = assessRisk(changeSet);
@@ -62,19 +67,34 @@ export class ConductReview {
       this.clock,
     );
     sessions.add(session);
-    await sessions.save(session);
-
-    const run = this.deliberate(session, agents, { snapshot, changeSet, risk, language: command.language })
+    // Claim the slot before the first await, so concurrent starts cannot all pass the cap.
+    const saved = sessions.save(session);
+    const done = saved
+      .then(() => this.deliberate(session, agents, { snapshot, changeSet, risk, language: command.language }))
       .catch((error) => this.deps.logger.error("Review session crashed", { sessionId: session.id, error: describeError(error) }))
       .finally(() => this.running.delete(session.id));
-    this.running.set(session.id, run);
+    this.running.set(session.id, { revision, done });
+    await saved;
     return { sessionId: session.id };
+  }
+
+  private assertRoomFor(revision: string): void {
+    const running = [...this.running.values()];
+    if (running.some((run) => run.revision === revision)) {
+      throw new ApplicationError("conflict", "The council is already reviewing this commit of the pull request.");
+    }
+    if (running.length >= MAX_CONCURRENT_REVIEWS) {
+      throw new ApplicationError(
+        "conflict",
+        `The council is already in session on ${running.length} pull requests, the most it runs at once. Try again when one of them has finished.`,
+      );
+    }
   }
 
   /** Resolves when the given session (or every running session) has finished. */
   async whenSettled(sessionId?: string): Promise<void> {
-    if (sessionId) return this.running.get(sessionId) ?? Promise.resolve();
-    await Promise.all(this.running.values());
+    if (sessionId) return this.running.get(sessionId)?.done ?? Promise.resolve();
+    await Promise.all([...this.running.values()].map((run) => run.done));
   }
 
   availableEngines(snapshot: PullRequestSnapshot): Engine[] {

@@ -30,9 +30,6 @@ async function main(): Promise<void> {
     webRoot: join(here, "..", "web", "dist"),
   });
 
-  if (config.host !== "127.0.0.1" && config.host !== "localhost" && !config.apiToken) {
-    logger.warn("Listening beyond localhost without CODER_API_TOKEN: anyone who can reach this port can start reviews and publish them.");
-  }
   await server.listen({ port: config.port, host: config.host });
   logger.info("CodeR is listening", {
     url: `http://${config.host}:${config.port}`,

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { RepositoryName } from "../infrastructure/github/GitHubSourceControl.js";
+import { isLoopback } from "../infrastructure/http/server.js";
 
 const flag = z
   .string()
@@ -41,6 +42,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     throw new Error(`Invalid configuration:\n${problems}`);
   }
   const e = parsed.data;
+  if (!isLoopback(e.HOST) && !e.CODER_API_TOKEN) {
+    throw new Error(
+      `Invalid configuration:\n  HOST: listening on ${e.HOST} needs CODER_API_TOKEN, or anyone who can reach this port could start reviews and publish them.`,
+    );
+  }
   return {
     port: e.PORT,
     host: e.HOST,

@@ -16,7 +16,11 @@ export interface HttpServerOptions {
   readonly api: CoderApi;
   readonly autoReview: AutoReview;
   readonly logger: Logger;
-  /** When set, every /api route except the webhook requires `Authorization: Bearer <token>`. */
+  /**
+   * When set, every /api route except health and the webhook requires
+   * `Authorization: Bearer <token>`. Without it, they only answer requests
+   * made on this machine.
+   */
   readonly apiToken?: string;
   /** When set, GitHub webhooks are accepted and their signature is verified with it. */
   readonly webhookSecret?: string;
@@ -101,7 +105,9 @@ export async function buildHttpServer(options: HttpServerOptions): Promise<Fasti
   await app.register(
     async (guarded) => {
       guarded.addHook("onRequest", async (request) => {
-        if (options.apiToken) requireToken(request, options.apiToken);
+        // With a token, the token is the protection: deployments sit behind arbitrary host names.
+        if (options.apiToken) return requireToken(request, options.apiToken);
+        requireLocalBrowser(request);
       });
 
       const pull = "/pulls/:provider/:owner/:repo/:number";
@@ -134,6 +140,39 @@ export async function buildHttpServer(options: HttpServerOptions): Promise<Fasti
 function requireToken(request: FastifyRequest, apiToken: string): void {
   const presented = request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
   if (!safeEqual(presented, apiToken)) throw new HttpError(401, "unauthorized", "Missing or invalid API token");
+}
+
+/**
+ * Without a token, being reachable only from this machine is the whole
+ * protection, so a request must also come from it: a loopback Host (no DNS
+ * rebinding) and no foreign web page as its origin (no cross-site requests).
+ */
+function requireLocalBrowser(request: FastifyRequest): void {
+  const origin = request.headers.origin;
+  const foreignOrigin = origin !== undefined && !isLoopback(hostnameOfOrigin(origin));
+  const crossSite = request.headers["sec-fetch-site"] === "cross-site";
+  if (!isLoopback(hostnameOfHost(request.headers.host ?? "")) || foreignOrigin || crossSite) {
+    throw new HttpError(403, "forbidden", "CodeR without CODER_API_TOKEN only answers requests made on this machine.");
+  }
+}
+
+const LOOPBACK_NAMES = new Set(["localhost", "127.0.0.1", "::1"]);
+
+/** True for a name that only reaches this machine (`[::1]` and `::1` alike). */
+export function isLoopback(hostname: string): boolean {
+  return LOOPBACK_NAMES.has(hostname.toLowerCase().replace(/^\[(.*)\]$/, "$1"));
+}
+
+function hostnameOfHost(host: string): string {
+  return host.startsWith("[") ? host.slice(0, host.indexOf("]") + 1) : host.split(":")[0]!;
+}
+
+function hostnameOfOrigin(origin: string): string {
+  try {
+    return new URL(origin).hostname;
+  } catch {
+    return ""; // "null" or garbage: not this machine
+  }
 }
 
 class HttpError extends Error {

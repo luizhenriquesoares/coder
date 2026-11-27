@@ -220,3 +220,44 @@ describe("HTTP API token", () => {
     expect(webhook.json()).toMatchObject({ error: { message: "Invalid webhook signature" } });
   });
 });
+
+describe("HTTP without an API token", () => {
+  async function localServer(): Promise<FastifyInstance> {
+    const { application } = createStandaloneApplication({ pace: instantPace });
+    const server = await buildHttpServer({ api: application, autoReview: noAutoReview, logger: silentLogger, webhookSecret: "s3cret" });
+    servers.push(server);
+    return server;
+  }
+  const reviews = "/api/pulls/demo/acme/storefront/131/reviews";
+
+  it("refuses what a foreign web page sends, or a request that reached it under a foreign host name", async () => {
+    const server = await localServer();
+    const refused = [
+      { method: "POST", url: reviews, headers: { origin: "https://evil.example" } },
+      { method: "POST", url: reviews, headers: { origin: "null" } },
+      { method: "POST", url: reviews, headers: { "sec-fetch-site": "cross-site" } },
+      { method: "GET", url: "/api/pulls", headers: { host: "evil.example:4317" } },
+      { method: "GET", url: "/%61pi/pulls", headers: { host: "evil.example:4317" } },
+    ] as const;
+    for (const request of refused) {
+      const response = await server.inject(request);
+      expect(response.statusCode, JSON.stringify(request.headers)).toBe(403);
+      expect(response.json()).toMatchObject({ error: { code: "forbidden" } });
+    }
+  });
+
+  it("answers the workspace on this machine and the webhook from anywhere", async () => {
+    const server = await localServer();
+    const sameOrigin = await server.inject({
+      method: "POST",
+      url: reviews,
+      headers: { host: "127.0.0.1:4317", origin: "http://127.0.0.1:4317", "sec-fetch-site": "same-origin" },
+    });
+    expect(sameOrigin.statusCode).toBe(200);
+    for (const host of ["localhost:5173", "[::1]:4317", "127.0.0.1"]) {
+      expect((await server.inject({ method: "GET", url: "/api/config", headers: { host } })).statusCode, host).toBe(200);
+    }
+    const webhook = await server.inject({ method: "POST", url: "/api/webhooks/github", payload: {}, headers: { host: "coder.example", "x-hub-signature-256": "sha256=wrong" } });
+    expect(webhook.statusCode).toBe(401); // reached, and refused by its signature
+  });
+});
