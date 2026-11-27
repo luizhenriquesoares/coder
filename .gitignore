@@ -1,0 +1,10 @@
+node_modules/
+dist/
+web/dist/
+web/dist-standalone/
+.data/
+.env
+*.log
+coverage/
+test-results/
+playwright-report/
