@@ -1,3 +1,4 @@
+import type { DomainEvent } from "../domain/deliberation/events.js";
 import { ReviewSession } from "../domain/deliberation/ReviewSession.js";
 import { foldEvents, type SessionState } from "../domain/deliberation/state.js";
 import { ApplicationError } from "./errors.js";
@@ -15,6 +16,8 @@ const MAX_LIVE_SESSIONS = 200;
 export class SessionRepository {
   private readonly live = new Map<string, ReviewSession>();
   private readonly saving = new Map<string, Promise<void>>();
+  /** Events whose append failed, kept to be written again, first, by the next save. */
+  private readonly unsaved = new Map<string, readonly DomainEvent[]>();
 
   constructor(
     private readonly store: EventStore,
@@ -36,15 +39,29 @@ export class SessionRepository {
     return session;
   }
 
-  /** Persists and publishes the session's pending events, in order. */
+  /**
+   * Persists and publishes the session's pending events, in order. When the
+   * append fails the events are kept and written again by the next save; the
+   * failure still reaches the caller.
+   */
   save(session: ReviewSession): Promise<void> {
-    const events = session.pullPendingEvents();
-    if (events.length === 0) return this.saving.get(session.id) ?? Promise.resolve();
+    const fresh = session.pullPendingEvents();
     const previous = this.saving.get(session.id) ?? Promise.resolve();
+    if (fresh.length === 0 && !this.unsaved.has(session.id)) return previous;
     const next = previous
       .catch(() => {})
-      .then(() => this.store.append(events))
-      .then(() => this.bus.publish(events));
+      .then(async () => {
+        const events = [...(this.unsaved.get(session.id) ?? []), ...fresh];
+        if (events.length === 0) return;
+        try {
+          await this.store.append(events);
+        } catch (error) {
+          this.unsaved.set(session.id, events);
+          throw error;
+        }
+        this.unsaved.delete(session.id);
+        this.bus.publish(events);
+      });
     this.saving.set(session.id, next);
     return next;
   }
@@ -69,7 +86,7 @@ export class SessionRepository {
   private evictFinishedSessions(): void {
     if (this.live.size <= MAX_LIVE_SESSIONS) return;
     for (const [id, session] of this.live) {
-      if (session.state.status !== "in_progress") {
+      if (session.state.status !== "in_progress" && !this.unsaved.has(id)) {
         this.live.delete(id);
         this.saving.delete(id);
       }

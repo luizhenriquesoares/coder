@@ -23,7 +23,7 @@ const quietOctokitLog = { debug() {}, info() {}, warn() {}, error() {} };
 
 /** Composition root of the server: wires adapters to the application. */
 export async function createServerApplication(config: ServerConfig, logger: Logger) {
-  const store = await FileEventStore.open(join(config.dataDir, "sessions"));
+  const store = await FileEventStore.open(join(config.dataDir, "sessions"), logger);
   const watchlist = await FileWatchlist.open(join(config.dataDir, "watchlist.json"));
   const bus = new InMemoryEventBus();
   const sessions = new SessionRepository(store, bus);
