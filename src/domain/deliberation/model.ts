@@ -91,11 +91,17 @@ export interface Patch {
   readonly original: string;
   readonly replacement: string;
   readonly explanation: string;
-  /** False when `original` could not be located in the head version of the file. */
+  /** False when `original` could not be located in the head version of the file, or occurs there ambiguously. */
   readonly applicable: boolean;
   /** 1-based line range of `original` in the head file, when applicable. */
   readonly startLine: number | null;
   readonly endLine: number | null;
+  /**
+   * The lines that replace `startLine..endLine`, exactly as they will be
+   * written (re-indented when the snippet matched loosely, empty for a
+   * deletion); null when the patch is not applicable.
+   */
+  readonly replacementLines: readonly string[] | null;
 }
 
 export interface DeclinedFinding {

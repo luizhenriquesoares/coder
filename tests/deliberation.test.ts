@@ -357,7 +357,8 @@ describe("code anchoring and patching", () => {
       "  return sum;",
     ]);
     expect(applySnippetPatch(HEAD, "absent", "x")).toBeNull();
-    expect(applyPatches(HEAD, [{ original: "absent", replacement: "x" }, { original: "  return sum;", replacement: "  return sum | 0;" }])).toContain("return sum | 0;");
+    const unplaced = { applicable: false, startLine: null, endLine: null, replacementLines: null };
+    expect(applyPatches(HEAD, [unplaced, { applicable: true, startLine: 4, endLine: 4, replacementLines: ["  return sum | 0;"] }])).toContain("return sum | 0;");
   });
 });
 
@@ -444,5 +445,118 @@ describe("planPublication", () => {
 
   it("refuses to plan a publication before the verdict", () => {
     expect(() => planPublication(debated("major", { architect: "agree" }).state, changeSet)).toThrow(DomainError);
+  });
+});
+
+describe("patches land where their finding is, and publish what was previewed", () => {
+  const REPO = [
+    "export function findUser(id) {",
+    "  const row = db.get(id);",
+    "  if (!row) return null;",
+    "  return row;",
+    "}",
+    "export function findOrder(id) {",
+    "  const row = db.get(id);",
+    "  if (!row) return null;",
+    "  return row;",
+    "}",
+  ].join("\n");
+  const PY = ["def total(items):", "    s = 0", "    for i in items:", "        s += i.price", "    return s"].join("\n");
+  const files = { "src/repo.ts": REPO, "app/total.py": PY };
+  const cs = ChangeSet.fromSnapshot({
+    ...snapshot,
+    files: Object.entries(files).map(([path, text]) => ({
+      path,
+      status: "added" as const,
+      additions: text.split("\n").length,
+      deletions: 0,
+      patch: `@@ -0,0 +1,${text.split("\n").length} @@\n` + text.split("\n").map((l) => "+" + l).join("\n"),
+    })),
+  });
+  const heads = new Map(Object.entries(files));
+
+  /** Endorsed findings at the given places, then the given patches, then a verdict. */
+  function reviewed(findings: Partial<FindingDraft>[], patches: { findingIds: string[]; path: string; original: string; replacement: string; explanation?: string }[]) {
+    const session = convene();
+    session.startRound("opening");
+    for (const finding of findings) session.raiseFinding("staff", draft(finding), cs, heads);
+    session.startRound("debate");
+    session.state.findings.forEach((f) => session.takePosition("architect", { findingId: f.id, stance: "agree", argument: "yes" }));
+    session.settleConsensus();
+    session.startRound("implementation");
+    const proposed = patches.map((patch) => session.proposePatch("implementer", { explanation: "", ...patch }, cs, heads));
+    session.startRound("verdict");
+    session.issueVerdict("moderator", { decision: "comment", mergeRisk: "low", summary: "See the comments.", humanAttention: [] });
+    session.conclude();
+    return { session, proposed, plan: planPublication(session.state, cs) };
+  }
+  const onRepo = (line: number) => ({ path: "src/repo.ts", line, quote: "if (!row) return null;" });
+  const guard = { path: "src/repo.ts", original: "  if (!row) return null;" };
+
+  it("places a repeated snippet at the occurrence of the finding it fixes", () => {
+    const { proposed, plan } = reviewed([onRepo(8)], [{ ...guard, findingIds: ["F-1"], replacement: "  if (!row) throw new NotFound(id);" }]);
+    expect(proposed[0]).toMatchObject({ applicable: true, startLine: 8, endLine: 8 });
+    expect(plan.comments[0]).toMatchObject({ line: 8, patchId: "P-1" });
+    expect(applyPatches(REPO, proposed).split("\n")[2]).toBe("  if (!row) return null;");
+  });
+
+  it("places two patches of the same snippet at their two findings", () => {
+    const { proposed } = reviewed(
+      [onRepo(3), onRepo(8)],
+      [
+        { ...guard, findingIds: ["F-2"], replacement: "  if (!row) throw new OrderNotFound(id);" },
+        { ...guard, findingIds: ["F-1"], replacement: "  if (!row) throw new UserNotFound(id);" },
+      ],
+    );
+    expect(proposed.map((p) => p.startLine)).toEqual([8, 3]);
+    const patched = applyPatches(REPO, proposed).split("\n");
+    expect([patched[2], patched[7]]).toEqual(["  if (!row) throw new UserNotFound(id);", "  if (!row) throw new OrderNotFound(id);"]);
+  });
+
+  it("does not guess when the snippet's place is ambiguous", () => {
+    expect(locateSnippet(REPO, "  if (!row) return null;")).toBeNull();
+    expect(locateSnippet(REPO, "  if (!row) return null;", [3, 8])).toBeNull(); // a tie
+    const { proposed, plan } = reviewed([{ path: null, quote: "" }], [{ ...guard, findingIds: ["F-1"], replacement: "  if (!row) throw new NotFound(id);" }]);
+    expect(proposed[0]).toMatchObject({ applicable: false, startLine: null, replacementLines: null });
+    expect(plan.comments).toEqual([]);
+  });
+
+  it("publishes a loosely matched patch with the indentation the preview shows", () => {
+    const { proposed, plan } = reviewed(
+      [{ path: "app/total.py", line: 4, quote: "s += i.price" }],
+      [{ findingIds: ["F-1"], path: "app/total.py", original: "for i in items:\n    s += i.price", replacement: "for i in items:\n    s += i.price * i.qty" }],
+    );
+    expect(proposed[0]!.replacementLines).toEqual(["    for i in items:", "        s += i.price * i.qty"]);
+    expect(applyPatches(PY, proposed).split("\n").slice(2, 4)).toEqual(proposed[0]!.replacementLines);
+    expect(plan.comments[0]!.body).toContain("```suggestion\n    for i in items:\n        s += i.price * i.qty\n```");
+  });
+
+  it("publishes a deletion as a suggestion with no line in it", () => {
+    const { plan } = reviewed([{ path: "app/total.py", line: 4, quote: "s += i.price" }], [{ findingIds: ["F-1"], path: "app/total.py", original: "        s += i.price", replacement: "" }]);
+    expect(plan.comments[0]!.body.endsWith("```suggestion\n```")).toBe(true);
+  });
+
+  it("fences a suggestion that contains a code fence so it cannot close early", () => {
+    const docstring = '    """Example:\n    ```\n    total([])\n    ```\n    """';
+    const { plan } = reviewed([{ path: "app/total.py", line: 2, quote: "s = 0" }], [{ findingIds: ["F-1"], path: "app/total.py", original: "    s = 0", replacement: `${docstring}\n    s = 0` }]);
+    expect(plan.comments[0]!.body).toContain("````suggestion\n" + docstring + "\n    s = 0\n````");
+  });
+
+  it("keeps model prose from notifying people or linking issues, but leaves code verbatim", () => {
+    const { plan } = reviewed(
+      [
+        {
+          ...onRepo(3),
+          title: "Use @Transactional here",
+          rationale: "Ask @acme/platform, see #12, mail ops@acme.io; `@Keep` and `#7` are code.",
+        },
+      ],
+      [{ ...guard, findingIds: ["F-1"], replacement: "  // @Transactional see #12", explanation: "cc @dev-ana" }],
+    );
+    const body = plan.comments[0]!.body;
+    expect(body).toContain("Use `@Transactional` here");
+    expect(body).toContain("Ask `@acme/platform`, see `#12`, mail ops@acme.io; `@Keep` and `#7` are code.");
+    expect(body).toContain("cc `@dev-ana`");
+    expect(body).toContain("```suggestion\n  // @Transactional see #12\n```");
   });
 });

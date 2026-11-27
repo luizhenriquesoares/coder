@@ -23,7 +23,7 @@ import {
   type Usage,
   type Verdict,
 } from "./model.js";
-import { locateSnippet } from "./patching.js";
+import { locateSnippet, replacementLinesAt } from "./patching.js";
 import { PERSONAS, COUNCIL_ORDER } from "./personas.js";
 import { decisionKey, evolve, foldEvents, type SessionState } from "./state.js";
 import { applyVerdictPolicy, type VerdictDraft } from "./verdictPolicy.js";
@@ -200,12 +200,14 @@ export class ReviewSession {
     this.assertRound("implementation");
     this.assertParticipates(reviewer, "implementation");
     if (draft.findingIds.length === 0) throw new DomainError("A patch must address at least one finding");
-    draft.findingIds.forEach((id) => this.findingOrThrow(id));
+    const fixes = draft.findingIds.map((id) => this.findingOrThrow(id));
     const path = changeSet.resolvePath(draft.path);
     if (!path) throw new DomainError(`Patch targets a file outside the change set: ${draft.path}`);
 
+    // A snippet that occurs more than once belongs to the occurrence its findings point at.
+    const near = fixes.flatMap(({ location }) => (location.path === path && location.line !== null ? [location.line] : []));
     const head = contents.get(path);
-    const location = head === undefined ? null : locateSnippet(head, draft.original);
+    const location = head === undefined ? null : locateSnippet(head, draft.original, near);
     const patch: Patch = {
       id: `P-${this.current.patches.length + 1}`,
       author: reviewer,
@@ -217,6 +219,7 @@ export class ReviewSession {
       applicable: location !== null,
       startLine: location?.startLine ?? null,
       endLine: location?.endLine ?? null,
+      replacementLines: location && head !== undefined ? replacementLinesAt(head, location, draft.replacement) : null,
     };
     this.record("PatchProposed", { patch });
     return patch;

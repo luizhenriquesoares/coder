@@ -123,7 +123,8 @@ function suggestionComment(patch: Patch, body: string, findingId?: string): Plan
     path: patch.path,
     line: patch.endLine!,
     ...(multiLine ? { startLine: patch.startLine! } : {}),
-    body: `${body}\n\n\`\`\`suggestion\n${patch.replacement.replace(/\n+$/, "")}\n\`\`\``,
+    // The suggestion is the patch exactly as previewed; no lines at all is a deletion.
+    body: `${body}\n\n${fenced("suggestion", patch.replacementLines ?? [])}`,
     ...(findingId ? { findingId } : {}),
     patchId: patch.id,
   };
@@ -133,12 +134,12 @@ function findingBody(finding: Finding, consensus: Consensus | undefined, languag
   const t = LABELS[language];
   const author = PERSONAS[finding.author].name[language];
   const lines = [
-    `${SEVERITY_ICON[finding.severity]} **${finding.id} · ${finding.title}** · _${t.severity[finding.severity]}_ · ${author}`,
+    `${SEVERITY_ICON[finding.severity]} **${finding.id} · ${prose(finding.title)}** · _${t.severity[finding.severity]}_ · ${author}`,
     "",
-    finding.rationale,
+    prose(finding.rationale),
   ];
-  if (finding.recommendation) lines.push("", `**${t.recommendation}:** ${finding.recommendation}`);
-  if (finding.principle) lines.push("", `_${t.principle}: ${finding.principle}_`);
+  if (finding.recommendation) lines.push("", `**${t.recommendation}:** ${prose(finding.recommendation)}`);
+  if (finding.principle) lines.push("", `_${t.principle}: ${prose(finding.principle)}_`);
   if (consensus) {
     lines.push("", `${t.consensus}: **${t.levels[consensus.level]}** (${consensus.support.length} ${t.for}, ${consensus.opposition.length} ${t.against})`);
   }
@@ -147,7 +148,7 @@ function findingBody(finding: Finding, consensus: Consensus | undefined, languag
 
 function patchNote(patch: Patch, language: Language): string {
   const author = PERSONAS[patch.author].name[language];
-  return `🔧 **${LABELS[language].patch} ${patch.id}** · ${author}${patch.explanation ? `\n\n${patch.explanation}` : ""}`;
+  return `🔧 **${LABELS[language].patch} ${patch.id}** · ${author}${patch.explanation ? `\n\n${prose(patch.explanation)}` : ""}`;
 }
 
 function patchBody(patch: Patch, state: SessionState): string {
@@ -155,7 +156,7 @@ function patchBody(patch: Patch, state: SessionState): string {
   const fixes = patch.findingIds
     .map((id) => state.findings.find((f) => f.id === id))
     .filter((f): f is Finding => f !== undefined)
-    .map((f) => `${f.id} (${f.title})`)
+    .map((f) => `${f.id} (${prose(f.title)})`)
     .join(", ");
   return `${patchNote(patch, state.language)}\n\n_${t.fixes}: ${fixes}_`;
 }
@@ -166,25 +167,54 @@ function summaryBody(state: SessionState, inSummary: readonly Finding[], offline
   const lines = [
     `## 🧠 CodeR Council — ${t.decisions[verdict.decision]} · ${t.mergeRisk} ${t.risk[verdict.mergeRisk]}`,
     "",
-    verdict.summary,
+    prose(verdict.summary),
   ];
   if (verdict.overriddenByPolicy && verdict.decision !== verdict.proposedDecision) lines.push("", `> ${t.policyOverride}`);
   if (verdict.humanAttention.length > 0) {
-    lines.push("", `### ${t.humanAttention}`, ...verdict.humanAttention.map((item) => `- ${item}`));
+    lines.push("", `### ${t.humanAttention}`, ...verdict.humanAttention.map((item) => `- ${prose(item)}`));
   }
   if (inSummary.length > 0) {
     lines.push("", `### ${t.generalFindings}`, "", `| | ${t.finding} | ${t.where} |`, "|---|---|---|");
     for (const f of inSummary) {
       const where = f.location.path ? `\`${f.location.path}${f.location.line ? `:${f.location.line}` : ""}\`` : "—";
-      lines.push(`| ${SEVERITY_ICON[f.severity]} | **${f.id} · ${escapeCell(f.title)}** — ${escapeCell(f.recommendation || f.rationale)} | ${where} |`);
+      lines.push(`| ${SEVERITY_ICON[f.severity]} | **${f.id} · ${escapeCell(prose(f.title))}** — ${escapeCell(prose(f.recommendation || f.rationale))} | ${where} |`);
     }
   }
   for (const patch of offline) {
-    lines.push("", `#### ${patchNote(patch, state.language).split("\n")[0]} · \`${patch.path}:${patch.startLine}\``, "", patch.explanation, "", "```", patch.replacement, "```");
+    lines.push("", `#### ${patchNote(patch, state.language).split("\n")[0]} · \`${patch.path}:${patch.startLine}\``, "", prose(patch.explanation), "", fenced("", patch.replacementLines ?? []));
   }
   const members = state.council.map((id) => PERSONAS[id].name[state.language]).join(" · ");
   lines.push("", `<sub>${t.stats(state.findings.length, publishedCount, state.patches.length)} · ${members}</sub>`);
   return lines.join("\n");
+}
+
+/** A code block fenced with one backtick more than the longest run inside it, so its content cannot close it. */
+function fenced(info: string, lines: readonly string[]): string {
+  const longestRun = Math.max(0, ...(lines.join("\n").match(/`+/g) ?? []).map((run) => run.length));
+  const fence = "`".repeat(Math.max(3, longestRun + 1));
+  return [`${fence}${info}`, ...lines, fence].join("\n");
+}
+
+const CODE_SPAN = /(`+)[\s\S]*?\1/g;
+const MENTION_OR_ISSUE = /(^|[^\w`])(@[a-z\d](?:[a-z\d-]*)(?:\/[\w.-]+)?|#\d+)\b/gi;
+
+/**
+ * Model-authored prose goes out under the reviewer's identity: a `@name`,
+ * `@org/team` or `#123` in it must not notify anyone or link an issue, so
+ * outside code spans each one is wrapped in a code span.
+ */
+function prose(text: string): string {
+  let result = "";
+  let last = 0;
+  for (const span of text.matchAll(CODE_SPAN)) {
+    result += neutralize(text.slice(last, span.index)) + span[0];
+    last = span.index + span[0].length;
+  }
+  return result + neutralize(text.slice(last));
+}
+
+function neutralize(text: string): string {
+  return text.replace(MENTION_OR_ISSUE, (_match, before: string, reference: string) => `${before}\`${reference}\``);
 }
 
 function escapeCell(text: string): string {
