@@ -261,3 +261,24 @@ describe("HTTP without an API token", () => {
     expect(webhook.statusCode).toBe(401); // reached, and refused by its signature
   });
 });
+
+describe("HTTP errors", () => {
+  it("answers 404 for a pull request the source does not have, and logs the stack of a 500", async () => {
+    const { application } = createStandaloneApplication({ pace: instantPace });
+    const errors: Record<string, unknown>[] = [];
+    const logger = { ...silentLogger, error: (_message: string, data?: Record<string, unknown>) => void errors.push(data ?? {}) };
+    const broken: CoderApi = Object.assign(Object.create(application) as CoderApi, {
+      config: () => Promise.reject(new TypeError("config is broken")),
+    });
+    const server = await buildHttpServer({ api: broken, autoReview: noAutoReview, logger });
+    servers.push(server);
+
+    const missing = await server.inject({ method: "GET", url: "/api/pulls/demo/acme/storefront/999" });
+    expect(missing.statusCode).toBe(404);
+    expect(missing.json()).toEqual({ error: { code: "not_found", message: "There is no demo pull request demo:acme/storefront#999" } });
+
+    const failed = await server.inject({ method: "GET", url: "/api/config" });
+    expect(failed.json()).toEqual({ error: { code: "internal_error", message: "Internal error" } });
+    expect(errors).toEqual([{ error: "config is broken", stack: expect.stringContaining("TypeError: config is broken") }]);
+  });
+});

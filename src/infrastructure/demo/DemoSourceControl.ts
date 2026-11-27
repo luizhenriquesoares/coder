@@ -1,3 +1,4 @@
+import { ApplicationError } from "../../application/errors.js";
 import type { PublishedReview, PullRequestSummary, SourceControl } from "../../application/ports.js";
 import { summarize } from "../../application/ports.js";
 import { refKey, type FileContents, type PullRequestRef, type PullRequestSnapshot, type RawFileChange } from "../../domain/change/types.js";
@@ -37,7 +38,7 @@ export class DemoSourceControl implements SourceControl {
 
   async getFileContents(snapshot: PullRequestSnapshot, path: string): Promise<FileContents> {
     const file = this.find(snapshot.ref).files.find((candidate) => candidate.path === path);
-    if (!file) throw new Error(`${path} is not part of ${refKey(snapshot.ref)}`);
+    if (!file) throw new ApplicationError("not_found", `${path} is not part of ${refKey(snapshot.ref)}`);
     return { path, original: file.base ?? "", modified: file.head ?? "" };
   }
 
@@ -47,7 +48,7 @@ export class DemoSourceControl implements SourceControl {
 
   private find(ref: PullRequestRef): DemoPullRequest {
     const found = this.pullRequests.find((pr) => refKey(pr.ref) === refKey(ref));
-    if (!found) throw new Error(`Unknown demo pull request ${refKey(ref)}`);
+    if (!found) throw new ApplicationError("not_found", `There is no demo pull request ${refKey(ref)}`);
     return found;
   }
 

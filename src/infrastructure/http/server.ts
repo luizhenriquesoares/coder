@@ -9,8 +9,6 @@ import type { AutoReview } from "../../application/AutoReview.js";
 import { ApplicationError, describeError, type ApplicationErrorCode } from "../../application/errors.js";
 import type { Logger, PullRequestSummary, Unsubscribe } from "../../application/ports.js";
 import type { Provider, PullRequestRef } from "../../domain/change/types.js";
-import { CouncilAgentError } from "../claude/ClaudeCouncil.js";
-import { GitHubError } from "../github/GitHubSourceControl.js";
 
 export interface HttpServerOptions {
   readonly api: CoderApi;
@@ -77,7 +75,7 @@ export async function buildHttpServer(options: HttpServerOptions): Promise<Fasti
 
   app.setErrorHandler((error, _request, reply) => {
     const { status, code, message } = describeFailure(error);
-    if (status >= 500) logger.error("Request failed", { error: describeError(error) });
+    if (status >= 500) logger.error("Request failed", { error: describeError(error), ...(error instanceof Error ? { stack: error.stack } : {}) });
     void reply.status(status).send({ error: { code, message } });
   });
 
@@ -195,7 +193,6 @@ function parse<Schema extends z.ZodType>(schema: Schema, input: unknown): z.infe
 function describeFailure(error: unknown): { status: number; code: string; message: string } {
   if (error instanceof HttpError) return { status: error.status, code: error.code, message: error.message };
   if (error instanceof ApplicationError) return { status: STATUS_BY_CODE[error.code], code: error.code, message: error.message };
-  if (error instanceof GitHubError || error instanceof CouncilAgentError) return { status: 502, code: "upstream_failure", message: error.message };
   const status = typeof error === "object" && error !== null && "statusCode" in error ? Number(error.statusCode) : 500;
   if (status >= 400 && status < 500) return { status, code: "invalid_request", message: describeError(error) };
   return { status: 500, code: "internal_error", message: "Internal error" };

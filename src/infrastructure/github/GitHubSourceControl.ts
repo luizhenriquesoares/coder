@@ -1,4 +1,5 @@
 import type { Octokit } from "@octokit/rest";
+import { ApplicationError } from "../../application/errors.js";
 import type { PublishedReview, PullRequestSummary, SourceControl } from "../../application/ports.js";
 import type {
   FileContents,
@@ -26,9 +27,9 @@ export interface GitHubSourceControlOptions {
 }
 
 /** Raised with a message that is safe and useful to show in the workspace. */
-export class GitHubError extends Error {
-  constructor(message: string) {
-    super(message);
+export class GitHubError extends ApplicationError {
+  constructor(message: string, code: "upstream_failure" | "not_found" = "upstream_failure") {
+    super(code, message);
     this.name = "GitHubError";
   }
 }
@@ -107,7 +108,7 @@ export class GitHubSourceControl implements SourceControl {
 
   async getFileContents(snapshot: PullRequestSnapshot, path: string): Promise<FileContents> {
     const file = snapshot.files.find((candidate) => candidate.path === path);
-    if (!file) throw new GitHubError(`${path} is not part of this pull request`);
+    if (!file) throw new GitHubError(`${path} is not part of this pull request`, "not_found");
     const tooLargeToDiff = file.patch === undefined && file.additions + file.deletions > 0;
     if (isBinaryPath(path) || tooLargeToDiff) return { path, original: "", modified: "" };
 
@@ -269,6 +270,6 @@ function toGitHubError(action: string, error: unknown): GitHubError {
   if (status === 401) return new GitHubError("GitHub rejected the token. Check GITHUB_TOKEN.");
   if (status === 403 && /rate limit/i.test(detail)) return new GitHubError("GitHub rate limit reached. Configure GITHUB_TOKEN or wait a few minutes.");
   if (status === 403) return new GitHubError(`GitHub denied access while trying to ${action}. The token may lack permission for this repository.`);
-  if (status === 404) return new GitHubError(`GitHub could not ${action}: not found, or the token cannot see it.`);
+  if (status === 404) return new GitHubError(`GitHub could not ${action}: not found, or the token cannot see it.`, "not_found");
   return new GitHubError(`GitHub could not ${action}: ${detail}`);
 }

@@ -331,7 +331,7 @@ describe("live mode over HTTP", () => {
     expect(imported).toEqual({ status: 200, body: { provider: "github", owner: "acme", repo: "shop", number: 7 } });
     expect((await call("/api/pulls/import", { method: "POST", body: JSON.stringify({ url: "https://example.com/x" }) })).status).toBe(400);
     const missing = await call<{ error: { code: string } }>("/api/pulls/import", { method: "POST", body: JSON.stringify({ url: "acme/shop#99" }) });
-    expect(missing).toMatchObject({ status: 502, body: { error: { code: "upstream_failure" } } });
+    expect(missing).toMatchObject({ status: 404, body: { error: { code: "not_found" } } }); // a pull request GitHub does not have is not an upstream failure
     expect((await call("/api/sessions/unknown")).status).toBe(404);
     expect((await call(`${PULL}/reviews`, { method: "POST", body: "{not json" })).status).toBe(400);
     expect((await call(`${PULL}/reviews`, { method: "POST", body: JSON.stringify({ engine: "scripted" }) })).status).toBe(200); // falls back to an engine that can review it
