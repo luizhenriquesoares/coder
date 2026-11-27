@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { timingSafeEqual } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import fastifyStatic from "@fastify/static";
@@ -20,11 +20,18 @@ export interface HttpServerOptions {
    * made on this machine.
    */
   readonly apiToken?: string;
-  /** When set, GitHub webhooks are accepted and their signature is verified with it. */
-  readonly webhookSecret?: string;
+  /** When set, GitHub webhooks are accepted: the receiver verifies and reads them, the route only forwards. */
+  readonly githubWebhook?: WebhookReceiver;
   /** Directory with the built web app, served when it exists. */
   readonly webRoot?: string;
 }
+
+/** What the webhook route needs to know of a delivery. The source-control adapter that speaks the protocol provides it. */
+export type WebhookOutcome =
+  | { readonly kind: "rejected"; readonly message: string }
+  | { readonly kind: "ignored"; readonly reason: string }
+  | { readonly kind: "review"; readonly pullRequest: PullRequestSummary };
+export type WebhookReceiver = (delivery: { headers: FastifyRequest["headers"]; rawBody: Buffer }) => WebhookOutcome;
 
 const STATUS_BY_CODE: Record<ApplicationErrorCode, number> = {
   not_found: 404,
@@ -49,7 +56,6 @@ const DecisionBody = z.object({
 const ImportBody = z.object({ url: z.string().min(1).max(500) });
 const SessionParams = z.object({ id: z.string().min(1).max(100) });
 
-const REVIEWABLE_ACTIONS = new Set(["opened", "reopened", "synchronize", "ready_for_review"]);
 const HEARTBEAT_MS = 15_000;
 
 declare module "fastify" {
@@ -87,15 +93,11 @@ export async function buildHttpServer(options: HttpServerOptions): Promise<Fasti
   // Outside the guards: liveness, and GitHub, whose credential is the signature.
   app.get("/api/health", async () => ({ ok: true }));
   app.post("/api/webhooks/github", async (request, reply) => {
-    if (!options.webhookSecret) throw new HttpError(404, "not_found", "Webhooks are not configured");
-    const signature = String(request.headers["x-hub-signature-256"] ?? "");
-    if (!verifySignature(options.webhookSecret, request.rawBody ?? Buffer.alloc(0), signature)) {
-      throw new HttpError(401, "unauthorized", "Invalid webhook signature");
-    }
-    if (request.headers["x-github-event"] !== "pull_request") return reply.status(202).send({ ignored: "not a pull_request event" });
-    const pullRequest = summaryFromWebhook(request.body);
-    if (!pullRequest) return reply.status(202).send({ ignored: "not a reviewable action" });
-    const sessionId = await options.autoReview.consider(pullRequest, "webhook");
+    if (!options.githubWebhook) throw new HttpError(404, "not_found", "Webhooks are not configured");
+    const outcome = options.githubWebhook({ headers: request.headers, rawBody: request.rawBody ?? Buffer.alloc(0) });
+    if (outcome.kind === "rejected") throw new HttpError(401, "unauthorized", outcome.message);
+    if (outcome.kind === "ignored") return reply.status(202).send({ ignored: outcome.reason });
+    const sessionId = await options.autoReview.consider(outcome.pullRequest, "webhook");
     return reply.status(202).send({ sessionId });
   });
 
@@ -235,47 +237,8 @@ async function streamEvents(api: CoderApi, request: FastifyRequest, reply: Fasti
   }
 }
 
-function verifySignature(secret: string, body: Buffer, signature: string): boolean {
-  const expected = `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`;
-  return safeEqual(signature, expected);
-}
-
 function safeEqual(a: string, b: string): boolean {
   const left = Buffer.from(a);
   const right = Buffer.from(b);
   return left.length === right.length && timingSafeEqual(left, right);
-}
-
-const WebhookPayload = z.object({
-  action: z.string(),
-  repository: z.object({ name: z.string(), owner: z.object({ login: z.string() }) }),
-  pull_request: z.object({
-    number: z.number(),
-    title: z.string(),
-    html_url: z.string(),
-    draft: z.boolean().optional(),
-    state: z.string(),
-    updated_at: z.string(),
-    user: z.object({ login: z.string() }).nullable(),
-    base: z.object({ ref: z.string() }),
-    head: z.object({ ref: z.string(), sha: z.string() }),
-  }),
-});
-
-function summaryFromWebhook(body: unknown): PullRequestSummary | null {
-  const payload = WebhookPayload.safeParse(body);
-  if (!payload.success || !REVIEWABLE_ACTIONS.has(payload.data.action)) return null;
-  const { repository, pull_request: pr } = payload.data;
-  return {
-    ref: { provider: "github", owner: repository.owner.login, repo: repository.name, number: pr.number },
-    title: pr.title,
-    author: { login: pr.user?.login ?? "ghost" },
-    url: pr.html_url,
-    baseBranch: pr.base.ref,
-    headBranch: pr.head.ref,
-    headSha: pr.head.sha,
-    updatedAt: pr.updated_at,
-    draft: pr.draft ?? false,
-    state: pr.state === "open" ? "open" : "closed",
-  };
 }

@@ -1,9 +1,11 @@
+import { createHmac } from "node:crypto";
 import { Octokit } from "@octokit/rest";
 import { afterEach, describe, expect, it } from "vitest";
 import { ChangeSet } from "../src/domain/change/ChangeSet.js";
 import type { PullRequestRef } from "../src/domain/change/types.js";
 import type { PublicationPlan } from "../src/domain/deliberation/publicationPlanner.js";
 import { GitHubError, GitHubSourceControl } from "../src/infrastructure/github/GitHubSourceControl.js";
+import { githubWebhookReceiver } from "../src/infrastructure/github/webhook.js";
 import { startFakeGitHub, type FakeGitHub, type FakePullRequest } from "./support/fakeGitHub.js";
 
 const ref: PullRequestRef = { provider: "github", owner: "acme", repo: "shop", number: 7 };
@@ -251,5 +253,56 @@ describe("GitHub adapter against the REST API", () => {
   it("says so when a pull request does not exist or is not visible", async () => {
     const { source } = await connect();
     await expect(source.getSnapshot({ ...ref, number: 99 })).rejects.toThrow(/not found, or the token cannot see it/);
+  });
+});
+
+describe("GitHub webhooks", () => {
+  const receive = githubWebhookReceiver("s3cret");
+  const sign = (body: string) => `sha256=${createHmac("sha256", "s3cret").update(body).digest("hex")}`;
+  const payload = (action: string) =>
+    JSON.stringify({
+      action,
+      repository: { name: "shop", owner: { login: "acme" } },
+      pull_request: {
+        number: 7,
+        title: "Add rate limiter",
+        html_url: "https://github.com/acme/shop/pull/7",
+        draft: false,
+        state: "open",
+        merged_at: null,
+        updated_at: "2026-11-21T12:00:00Z",
+        user: { login: "dev-ana", avatar_url: "https://avatars.example/dev-ana" },
+        base: { ref: "main" },
+        head: { ref: "feature/7", sha: "head-1" },
+      },
+    });
+  const deliver = (body: string, headers: Record<string, string>) => receive({ headers, rawBody: Buffer.from(body) });
+
+  it("checks the signature over the raw bytes before reading anything", () => {
+    const body = payload("opened");
+    expect(deliver(body, { "x-github-event": "pull_request", "x-hub-signature-256": sign(body + " ") })).toEqual({ kind: "rejected", message: "Invalid webhook signature" });
+    expect(deliver(body, { "x-github-event": "pull_request" })).toMatchObject({ kind: "rejected" });
+  });
+
+  it("reads a reviewable pull request event with the adapter's own translation", () => {
+    const body = payload("synchronize");
+    expect(deliver(body, { "x-github-event": "pull_request", "x-hub-signature-256": sign(body) })).toEqual({
+      kind: "review",
+      pullRequest: {
+        ref,
+        title: "Add rate limiter",
+        author: { login: "dev-ana", avatarUrl: "https://avatars.example/dev-ana" },
+        url: "https://github.com/acme/shop/pull/7",
+        baseBranch: "main",
+        headBranch: "feature/7",
+        headSha: "head-1",
+        updatedAt: "2026-11-21T12:00:00Z",
+        draft: false,
+        state: "open",
+      },
+    });
+    const closed = payload("closed");
+    expect(deliver(closed, { "x-github-event": "pull_request", "x-hub-signature-256": sign(closed) })).toEqual({ kind: "ignored", reason: "not a reviewable action" });
+    expect(deliver(body, { "x-github-event": "push", "x-hub-signature-256": sign(body) })).toEqual({ kind: "ignored", reason: "not a pull_request event" });
   });
 });

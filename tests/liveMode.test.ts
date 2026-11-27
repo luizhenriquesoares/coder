@@ -11,6 +11,7 @@ import { createServerApplication } from "../src/composition/server.js";
 import type { DomainEvent } from "../src/domain/deliberation/events.js";
 import type { PublicationPlan } from "../src/domain/deliberation/publicationPlanner.js";
 import type { SessionState } from "../src/domain/deliberation/state.js";
+import { githubWebhookReceiver } from "../src/infrastructure/github/webhook.js";
 import { buildHttpServer } from "../src/infrastructure/http/server.js";
 import { HttpCoderApi } from "../web/src/api/HttpCoderApi.js";
 import { followUntilConcluded as follow } from "./support/follow.js";
@@ -124,7 +125,7 @@ async function boot(dataDir: string, github: FakeGitHub, anthropic: FakeAnthropi
     CODER_LANGUAGE: "pt",
   });
   const { application, autoReview, conductReview } = await createServerApplication(config, silentLogger);
-  const server = await buildHttpServer({ api: application, autoReview, logger: silentLogger, apiToken: config.apiToken!, webhookSecret: config.github.webhookSecret! });
+  const server = await buildHttpServer({ api: application, autoReview, logger: silentLogger, apiToken: config.apiToken!, githubWebhook: githubWebhookReceiver(config.github.webhookSecret!) });
   const url = await server.listen({ port: 0, host: "127.0.0.1" });
   cleanups.push(async () => {
     await conductReview.whenSettled();
@@ -329,6 +330,8 @@ describe("live mode over HTTP", () => {
     await start();
     const imported = await call("/api/pulls/import", { method: "POST", body: JSON.stringify({ url: "https://github.com/acme/shop/pull/7/files" }) });
     expect(imported).toEqual({ status: 200, body: { provider: "github", owner: "acme", repo: "shop", number: 7 } });
+    const enterprise = await call("/api/pulls/import", { method: "POST", body: JSON.stringify({ url: "https://github.acme.internal/acme/shop/pull/7" }) });
+    expect(enterprise).toEqual({ status: 200, body: { provider: "github", owner: "acme", repo: "shop", number: 7 } }); // GitHub Enterprise Server
     expect((await call("/api/pulls/import", { method: "POST", body: JSON.stringify({ url: "https://example.com/x" }) })).status).toBe(400);
     const missing = await call<{ error: { code: string } }>("/api/pulls/import", { method: "POST", body: JSON.stringify({ url: "acme/shop#99" }) });
     expect(missing).toMatchObject({ status: 404, body: { error: { code: "not_found" } } }); // a pull request GitHub does not have is not an upstream failure

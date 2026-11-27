@@ -10,6 +10,7 @@ import { silentLogger } from "../src/application/ports.js";
 import { createStandaloneApplication } from "../src/composition/standalone.js";
 import type { DomainEvent } from "../src/domain/deliberation/events.js";
 import { instantPace } from "../src/infrastructure/demo/ScriptedCouncil.js";
+import { githubWebhookReceiver } from "../src/infrastructure/github/webhook.js";
 import { buildHttpServer } from "../src/infrastructure/http/server.js";
 import { foldEvents } from "../src/domain/deliberation/state.js";
 import { ApiError, HttpCoderApi } from "../web/src/api/HttpCoderApi.js";
@@ -189,7 +190,7 @@ describe("HTTP API token", () => {
   async function guardedServer(): Promise<{ server: FastifyInstance; sessionId: string }> {
     const { application } = createStandaloneApplication({ pace: instantPace });
     const { sessionId } = await application.startReview(STOREFRONT, { language: "en" });
-    const server = await buildHttpServer({ api: application, autoReview: noAutoReview, logger: silentLogger, apiToken: TOKEN, webhookSecret: "s3cret" });
+    const server = await buildHttpServer({ api: application, autoReview: noAutoReview, logger: silentLogger, apiToken: TOKEN, githubWebhook: githubWebhookReceiver("s3cret") });
     servers.push(server);
     return { server, sessionId };
   }
@@ -224,7 +225,7 @@ describe("HTTP API token", () => {
 describe("HTTP without an API token", () => {
   async function localServer(): Promise<FastifyInstance> {
     const { application } = createStandaloneApplication({ pace: instantPace });
-    const server = await buildHttpServer({ api: application, autoReview: noAutoReview, logger: silentLogger, webhookSecret: "s3cret" });
+    const server = await buildHttpServer({ api: application, autoReview: noAutoReview, logger: silentLogger, githubWebhook: githubWebhookReceiver("s3cret") });
     servers.push(server);
     return server;
   }

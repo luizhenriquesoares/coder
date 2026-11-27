@@ -191,7 +191,7 @@ export class GitHubSourceControl implements SourceControl {
   }
 }
 
-interface PullRequestFields {
+export interface PullRequestFields {
   readonly title: string;
   readonly html_url: string;
   readonly draft?: boolean;
@@ -203,7 +203,7 @@ interface PullRequestFields {
   readonly head: { readonly ref: string; readonly sha: string };
 }
 
-function toSummary(ref: PullRequestRef, pr: PullRequestFields): PullRequestSummary {
+export function toSummary(ref: PullRequestRef, pr: PullRequestFields): PullRequestSummary {
   const state: PullRequestState = pr.merged_at ? "merged" : pr.state === "open" ? "open" : "closed";
   return {
     ref,

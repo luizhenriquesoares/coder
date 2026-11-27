@@ -5,6 +5,7 @@ import { describeError } from "./application/errors.js";
 import type { Logger } from "./application/ports.js";
 import { loadConfig } from "./composition/config.js";
 import { createServerApplication } from "./composition/server.js";
+import { githubWebhookReceiver } from "./infrastructure/github/webhook.js";
 import { buildHttpServer } from "./infrastructure/http/server.js";
 
 const logger: Logger = {
@@ -26,7 +27,7 @@ async function main(): Promise<void> {
     autoReview,
     logger,
     ...(config.apiToken ? { apiToken: config.apiToken } : {}),
-    ...(config.github.webhookSecret ? { webhookSecret: config.github.webhookSecret } : {}),
+    ...(config.github.webhookSecret ? { githubWebhook: githubWebhookReceiver(config.github.webhookSecret) } : {}),
     webRoot: join(here, "..", "web", "dist"),
   });
 

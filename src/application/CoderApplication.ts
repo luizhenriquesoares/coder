@@ -40,7 +40,8 @@ export interface CoderApplicationDeps {
   readonly reviewerName: string;
 }
 
-const GITHUB_PR_URL = /^https?:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)/i;
+/** Any host: the GitHub adapter also serves GitHub Enterprise Server. */
+const PULL_REQUEST_URL = /^https?:\/\/[^/\s]+\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)/i;
 /** A watched pull request stays in the inbox this long after it was closed or merged. */
 const CLOSED_WATCH_RETENTION_MS = 3 * 24 * 60 * 60_000;
 const SHORT_PR_REF = /^([\w.-]+)\/([\w.-]+)#(\d+)$/;
@@ -86,7 +87,7 @@ export class CoderApplication implements CoderApi {
   }
 
   async importPullRequest(url: string): Promise<PullRequestRef> {
-    const match = GITHUB_PR_URL.exec(url.trim()) ?? SHORT_PR_REF.exec(url.trim());
+    const match = PULL_REQUEST_URL.exec(url.trim()) ?? SHORT_PR_REF.exec(url.trim());
     if (!match) {
       throw new ApplicationError("invalid_request", "Expected a GitHub pull request URL (https://github.com/owner/repo/pull/123)");
     }
