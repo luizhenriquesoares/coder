@@ -164,7 +164,7 @@ describe("live mode over HTTP", () => {
     await start();
     expect((await call("/api/pulls", { token: null })).status).toBe(401);
     expect((await call("/api/pulls", { token: "wrong-token-000000000000000" })).status).toBe(401);
-    expect((await call("/api/health", { token: null })).status).toBe(401);
+    expect((await call("/api/health", { token: null })).status).toBe(200); // liveness, outside the guard
     expect((await call("/api/config")).status).toBe(200);
   });
 

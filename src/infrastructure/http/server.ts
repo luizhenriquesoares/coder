@@ -77,32 +77,13 @@ export async function buildHttpServer(options: HttpServerOptions): Promise<Fasti
     void reply.status(status).send({ error: { code, message } });
   });
 
-  app.addHook("onRequest", async (request) => {
-    if (!options.apiToken || !request.url.startsWith("/api/") || request.url.startsWith("/api/webhooks/")) return;
-    const presented = request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
-    if (!safeEqual(presented, options.apiToken)) throw new HttpError(401, "unauthorized", "Missing or invalid API token");
-  });
-
   const refOf = (request: FastifyRequest): PullRequestRef => {
     const { provider, owner, repo, number } = parse(RefParams, request.params);
     return { provider: provider as Provider, owner, repo, number };
   };
-  const pull = "/api/pulls/:provider/:owner/:repo/:number";
 
+  // Outside the guards: liveness, and GitHub, whose credential is the signature.
   app.get("/api/health", async () => ({ ok: true }));
-  app.get("/api/config", () => api.config());
-  app.get("/api/pulls", () => api.inbox());
-  app.post("/api/pulls/import", (request) => api.importPullRequest(parse(ImportBody, request.body).url));
-  app.get(pull, (request) => api.pullRequest(refOf(request)));
-  app.get(`${pull}/file`, (request) => api.fileContents(refOf(request), parse(z.object({ path: z.string().min(1) }), request.query).path));
-  app.post(`${pull}/reviews`, (request) => api.startReview(refOf(request), parse(StartReviewBody, request.body ?? {})));
-
-  app.get("/api/sessions/:id", (request) => api.session(parse(SessionParams, request.params).id));
-  app.post("/api/sessions/:id/decisions", (request) => api.decide(parse(SessionParams, request.params).id, parse(DecisionBody, request.body)));
-  app.get("/api/sessions/:id/publication", (request) => api.publicationPreview(parse(SessionParams, request.params).id));
-  app.post("/api/sessions/:id/publish", (request) => api.publish(parse(SessionParams, request.params).id));
-  app.get("/api/sessions/:id/events", (request, reply) => streamEvents(api, request, reply));
-
   app.post("/api/webhooks/github", async (request, reply) => {
     if (!options.webhookSecret) throw new HttpError(404, "not_found", "Webhooks are not configured");
     const signature = String(request.headers["x-hub-signature-256"] ?? "");
@@ -116,6 +97,30 @@ export async function buildHttpServer(options: HttpServerOptions): Promise<Fasti
     return reply.status(202).send({ sessionId });
   });
 
+  // Every route registered in this plugin is guarded by its hook, whatever the spelling of the URL that reached it.
+  await app.register(
+    async (guarded) => {
+      guarded.addHook("onRequest", async (request) => {
+        if (options.apiToken) requireToken(request, options.apiToken);
+      });
+
+      const pull = "/pulls/:provider/:owner/:repo/:number";
+      guarded.get("/config", () => api.config());
+      guarded.get("/pulls", () => api.inbox());
+      guarded.post("/pulls/import", (request) => api.importPullRequest(parse(ImportBody, request.body).url));
+      guarded.get(pull, (request) => api.pullRequest(refOf(request)));
+      guarded.get(`${pull}/file`, (request) => api.fileContents(refOf(request), parse(z.object({ path: z.string().min(1) }), request.query).path));
+      guarded.post(`${pull}/reviews`, (request) => api.startReview(refOf(request), parse(StartReviewBody, request.body ?? {})));
+
+      guarded.get("/sessions/:id", (request) => api.session(parse(SessionParams, request.params).id));
+      guarded.post("/sessions/:id/decisions", (request) => api.decide(parse(SessionParams, request.params).id, parse(DecisionBody, request.body)));
+      guarded.get("/sessions/:id/publication", (request) => api.publicationPreview(parse(SessionParams, request.params).id));
+      guarded.post("/sessions/:id/publish", (request) => api.publish(parse(SessionParams, request.params).id));
+      guarded.get("/sessions/:id/events", (request, reply) => streamEvents(api, request, reply));
+    },
+    { prefix: "/api" },
+  );
+
   if (options.webRoot && existsSync(join(options.webRoot, "index.html"))) {
     await app.register(fastifyStatic, { root: options.webRoot });
     app.setNotFoundHandler((request, reply) => {
@@ -124,6 +129,11 @@ export async function buildHttpServer(options: HttpServerOptions): Promise<Fasti
     });
   }
   return app;
+}
+
+function requireToken(request: FastifyRequest, apiToken: string): void {
+  const presented = request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "";
+  if (!safeEqual(presented, apiToken)) throw new HttpError(401, "unauthorized", "Missing or invalid API token");
 }
 
 class HttpError extends Error {

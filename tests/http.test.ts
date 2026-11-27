@@ -182,3 +182,41 @@ describe("HttpCoderApi event stream", () => {
     unsubscribe();
   });
 });
+
+describe("HTTP API token", () => {
+  const TOKEN = "local-test-token-0123456789";
+
+  async function guardedServer(): Promise<{ server: FastifyInstance; sessionId: string }> {
+    const { application } = createStandaloneApplication({ pace: instantPace });
+    const { sessionId } = await application.startReview(STOREFRONT, { language: "en" });
+    const server = await buildHttpServer({ api: application, autoReview: noAutoReview, logger: silentLogger, apiToken: TOKEN, webhookSecret: "s3cret" });
+    servers.push(server);
+    return { server, sessionId };
+  }
+
+  it("guards the route that matched, however its URL is spelled", async () => {
+    const { server, sessionId } = await guardedServer();
+    const requests = [
+      { method: "GET", url: "/api/config" },
+      { method: "GET", url: "/%61pi/config" },
+      { method: "GET", url: "/ap%69/pulls" },
+      { method: "POST", url: "/%61pi/pulls/demo/acme/storefront/131/reviews" },
+      { method: "POST", url: `/%61pi/sessions/${sessionId}/publish` },
+      { method: "GET", url: `/api/sessions/${sessionId}/even%74s` },
+    ] as const;
+    for (const request of requests) {
+      const response = await server.inject(request);
+      expect(response.statusCode, request.url).toBe(401);
+    }
+    const authorized = await server.inject({ method: "GET", url: "/%61pi/config", headers: { authorization: `Bearer ${TOKEN}` } });
+    expect(authorized.statusCode).toBe(200);
+  });
+
+  it("leaves the health check and the signed webhook reachable without the token", async () => {
+    const { server } = await guardedServer();
+    expect((await server.inject({ method: "GET", url: "/api/health" })).statusCode).toBe(200);
+    const webhook = await server.inject({ method: "POST", url: "/api/webhooks/github", payload: {}, headers: { "x-hub-signature-256": "sha256=wrong" } });
+    expect(webhook.statusCode).toBe(401);
+    expect(webhook.json()).toMatchObject({ error: { message: "Invalid webhook signature" } });
+  });
+});
