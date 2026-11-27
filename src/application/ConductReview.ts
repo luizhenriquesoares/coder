@@ -2,8 +2,8 @@ import { ChangeSet } from "../domain/change/ChangeSet.js";
 import { assessRisk } from "../domain/change/riskAssessment.js";
 import { revisionKey, type PullRequestRef, type PullRequestSnapshot } from "../domain/change/types.js";
 import type { ReviewedPullRequest } from "../domain/deliberation/events.js";
-import { DomainError, PANELISTS, type Engine, type Language, type ReviewerId, type Trigger } from "../domain/deliberation/model.js";
-import { PERSONAS } from "../domain/deliberation/personas.js";
+import { DomainError, type Engine, type Language, type ReviewerId, type Trigger } from "../domain/deliberation/model.js";
+import { PERSONAS, speakersIn } from "../domain/deliberation/personas.js";
 import { MAX_FINDINGS_PER_REVIEWER, ReviewSession, type Clock } from "../domain/deliberation/ReviewSession.js";
 import { levelOf } from "../domain/deliberation/state.js";
 import { fallbackVerdict } from "../domain/deliberation/verdictPolicy.js";
@@ -190,7 +190,7 @@ class Protocol {
   async opening(): Promise<void> {
     this.session.startRound("opening");
     const spoke = await this.speak(
-      PANELISTS,
+      speakersIn("opening"),
       (reviewer, signal) => this.agents.open({ persona: PERSONAS[reviewer], context: this.context, signal }),
       (reviewer, contribution) => {
         for (const draft of contribution.findings.slice(0, MAX_FINDINGS_PER_REVIEWER)) {
@@ -207,7 +207,7 @@ class Protocol {
     this.session.startRound("debate");
     const { findings, statements } = this.session.state;
     const openingStatements = statements.filter((s) => s.round === "opening" && !s.failed);
-    const panel = PANELISTS.filter((reviewer) => openingStatements.some((s) => s.reviewer === reviewer));
+    const panel = speakersIn("debate").filter((reviewer) => openingStatements.some((s) => s.reviewer === reviewer));
     if (findings.length > 0 && panel.length >= 2) {
       await this.speak(
         panel,
@@ -231,7 +231,7 @@ class Protocol {
     if (worthFixing.length === 0) return this.save();
 
     await this.speak(
-      ["implementer"],
+      speakersIn("implementation"),
       (reviewer, signal) => this.agents.implement({ persona: PERSONAS[reviewer], context: this.context, signal, findings, positions, consensus }),
       (reviewer, contribution) => {
         for (const draft of contribution.patches) {
@@ -250,7 +250,7 @@ class Protocol {
     this.session.startRound("verdict");
     const state = this.session.state;
     const spoke = await this.speak(
-      ["moderator"],
+      speakersIn("verdict"),
       (reviewer, signal) =>
         this.agents.moderate({
           persona: PERSONAS[reviewer],

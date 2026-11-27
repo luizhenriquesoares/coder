@@ -6,6 +6,7 @@ import { anchorLocation } from "../src/domain/deliberation/codeAnchoring.js";
 import { computeConsensus } from "../src/domain/deliberation/consensusPolicy.js";
 import {
   DomainError,
+  PANELISTS,
   type ConsensusLevel,
   type Decision,
   type Finding,
@@ -16,6 +17,7 @@ import {
   type Stance,
 } from "../src/domain/deliberation/model.js";
 import { applyPatches, applySnippetPatch, locateSnippet } from "../src/domain/deliberation/patching.js";
+import { speakersIn } from "../src/domain/deliberation/personas.js";
 import { planPublication, selectPublication } from "../src/domain/deliberation/publicationPlanner.js";
 import { MAX_FINDINGS_PER_REVIEWER, ReviewSession, type FindingDraft } from "../src/domain/deliberation/ReviewSession.js";
 import { foldEvents, isPublished } from "../src/domain/deliberation/state.js";
@@ -223,6 +225,15 @@ function debatedUntilImplementation(): ReviewSession {
   session.startRound("implementation");
   return session;
 }
+
+describe("the seating plan", () => {
+  it("names who speaks in each round", () => {
+    expect(speakersIn("opening")).toEqual(["architect", "staff", "refactoring", "cleancode"]);
+    expect(speakersIn("debate")).toEqual([...PANELISTS]);
+    expect(speakersIn("implementation")).toEqual(["implementer"]);
+    expect(speakersIn("verdict")).toEqual(["moderator"]);
+  });
+});
 
 describe("ConsensusPolicy", () => {
   const finding = { id: "F-1", author: "staff" } as Finding;

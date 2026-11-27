@@ -105,3 +105,8 @@ export const COUNCIL_ORDER: readonly ReviewerId[] = [
   "implementer",
   "moderator",
 ];
+
+/** Who speaks in a round, in council order: the seating plan the protocol follows and the aggregate enforces. */
+export function speakersIn(round: Round): ReviewerId[] {
+  return COUNCIL_ORDER.filter((reviewer) => PERSONAS[reviewer].rounds.includes(round));
+}
