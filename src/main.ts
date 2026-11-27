@@ -19,7 +19,7 @@ function format(level: string, message: string, data?: Record<string, unknown>):
 
 async function main(): Promise<void> {
   const config = loadConfig();
-  const { application, autoReview } = await createServerApplication(config, logger);
+  const { application, autoReview, conductReview } = await createServerApplication(config, logger);
   const here = dirname(fileURLToPath(import.meta.url));
   const server = await buildHttpServer({
     api: application,
@@ -45,9 +45,21 @@ async function main(): Promise<void> {
     setInterval(poll, config.autoReview.pollIntervalMs).unref();
   }
 
-  const shutdown = () => void server.close().then(() => process.exit(0));
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  // Stop taking requests, give every running session an outcome, then exit. A second signal exits at once.
+  let stopping = false;
+  const shutdown = async () => {
+    if (stopping) process.exit(1);
+    stopping = true;
+    try {
+      await server.close();
+      await conductReview.interruptRunning("The server stopped while the council was in session. Convene the council again.");
+    } catch (error) {
+      logger.error("Shutdown did not complete", { error: describeError(error) });
+    }
+    process.exit(0);
+  };
+  process.on("SIGINT", () => void shutdown());
+  process.on("SIGTERM", () => void shutdown());
 }
 
 main().catch((error) => {

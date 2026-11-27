@@ -27,7 +27,11 @@ export interface ConductReviewDeps {
   readonly newId: () => string;
   /** Defaults to the wall clock. The demo replaces it to replay a session in simulated time. */
   readonly clock?: Clock;
+  /** How long one reviewer may take to answer. Defaults to 15 minutes. */
+  readonly reviewerDeadlineMs?: number;
 }
+
+const DEFAULT_REVIEWER_DEADLINE_MS = 15 * 60_000;
 
 /** Each deliberation is up to ten paid model calls: a cap keeps a burst of requests from becoming a bill. */
 export const MAX_CONCURRENT_REVIEWS = 4;
@@ -37,11 +41,13 @@ export const MAX_CONCURRENT_REVIEWS = 4;
  * protocol (opening → debate → implementation → verdict). See docs/DOMAIN.md §8.
  */
 export class ConductReview {
-  private readonly running = new Map<string, { readonly revision: string; readonly done: Promise<void> }>();
+  private readonly running = new Map<string, { readonly session: ReviewSession; readonly revision: string; readonly done: Promise<void> }>();
   private readonly clock: Clock;
+  private readonly deadlineMs: number;
 
   constructor(private readonly deps: ConductReviewDeps) {
     this.clock = deps.clock ?? (() => new Date());
+    this.deadlineMs = deps.reviewerDeadlineMs ?? DEFAULT_REVIEWER_DEADLINE_MS;
   }
 
   /** Convenes the session and returns immediately; the council deliberates in the background. */
@@ -74,7 +80,7 @@ export class ConductReview {
       .then(() => this.deliberate(session, agents, { snapshot, changeSet, risk, language: command.language }))
       .catch((error) => this.deps.logger.error("Review session crashed", { sessionId: session.id, error: describeError(error) }))
       .finally(() => this.running.delete(session.id));
-    this.running.set(session.id, { revision, done });
+    this.running.set(session.id, { session, revision, done });
     await saved;
     return { sessionId: session.id };
   }
@@ -96,6 +102,16 @@ export class ConductReview {
   async whenSettled(sessionId?: string): Promise<void> {
     if (sessionId) return this.running.get(sessionId)?.done ?? Promise.resolve();
     await Promise.all([...this.running.values()].map((run) => run.done));
+  }
+
+  /** Fails and saves every session still deliberating, e.g. when the server shuts down. */
+  async interruptRunning(reason: string): Promise<void> {
+    await Promise.allSettled(
+      [...this.running.values()].map(({ session }) => {
+        if (session.state.status === "in_progress") session.fail(reason);
+        return this.deps.sessions.save(session);
+      }),
+    );
   }
 
   availableEngines(snapshot: PullRequestSnapshot): Engine[] {
@@ -127,7 +143,7 @@ export class ConductReview {
         partial.risk.reviewOrder,
       );
       const context: ReviewContext = { ...partial, headContents: contents, diffOnly };
-      const protocol = new Protocol(session, agents, context, save, this.deps.logger, this.clock);
+      const protocol = new Protocol(session, agents, context, save, this.deps.logger, this.clock, this.deadlineMs);
       await protocol.opening();
       await protocol.debate();
       await protocol.implementation();
@@ -139,6 +155,12 @@ export class ConductReview {
     }
     await save();
   }
+}
+
+function describeDuration(milliseconds: number): string {
+  if (milliseconds % 60_000 === 0) return `${milliseconds / 60_000} minute${milliseconds === 60_000 ? "" : "s"}`;
+  if (milliseconds % 1000 === 0) return `${milliseconds / 1000} seconds`;
+  return `${milliseconds} ms`;
 }
 
 function reviewedPullRequest(snapshot: PullRequestSnapshot): ReviewedPullRequest {
@@ -155,13 +177,14 @@ class Protocol {
     private readonly save: () => Promise<void>,
     private readonly logger: Logger,
     private readonly clock: Clock,
+    private readonly deadlineMs: number,
   ) {}
 
   async opening(): Promise<void> {
     this.session.startRound("opening");
     const spoke = await this.speak(
       PANELISTS,
-      (reviewer) => this.agents.open({ persona: PERSONAS[reviewer], context: this.context }),
+      (reviewer, signal) => this.agents.open({ persona: PERSONAS[reviewer], context: this.context, signal }),
       (reviewer, contribution) => {
         for (const draft of contribution.findings.slice(0, MAX_FINDINGS_PER_REVIEWER)) {
           this.tolerating(reviewer, () =>
@@ -181,7 +204,7 @@ class Protocol {
     if (findings.length > 0 && panel.length >= 2) {
       await this.speak(
         panel,
-        (reviewer) => this.agents.debate({ persona: PERSONAS[reviewer], context: this.context, findings, openingStatements }),
+        (reviewer, signal) => this.agents.debate({ persona: PERSONAS[reviewer], context: this.context, signal, findings, openingStatements }),
         (reviewer, contribution) => {
           for (const draft of contribution.positions) {
             this.tolerating(reviewer, () => this.session.takePosition(reviewer, draft));
@@ -202,7 +225,7 @@ class Protocol {
 
     await this.speak(
       ["implementer"],
-      (reviewer) => this.agents.implement({ persona: PERSONAS[reviewer], context: this.context, findings, positions, consensus }),
+      (reviewer, signal) => this.agents.implement({ persona: PERSONAS[reviewer], context: this.context, signal, findings, positions, consensus }),
       (reviewer, contribution) => {
         for (const draft of contribution.patches) {
           this.tolerating(reviewer, () =>
@@ -221,10 +244,11 @@ class Protocol {
     const state = this.session.state;
     const spoke = await this.speak(
       ["moderator"],
-      (reviewer) =>
+      (reviewer, signal) =>
         this.agents.moderate({
           persona: PERSONAS[reviewer],
           context: this.context,
+          signal,
           findings: state.findings,
           positions: state.positions,
           consensus: state.consensus,
@@ -248,7 +272,7 @@ class Protocol {
    */
   private async speak<C extends Contribution>(
     reviewers: readonly ReviewerId[],
-    ask: (reviewer: ReviewerId) => Promise<C>,
+    ask: (reviewer: ReviewerId, signal: AbortSignal) => Promise<C>,
     record: (reviewer: ReviewerId, contribution: C) => void,
   ): Promise<Map<ReviewerId, C>> {
     reviewers.forEach((reviewer) => this.session.startThinking(reviewer));
@@ -259,7 +283,7 @@ class Protocol {
       reviewers.map(async (reviewer) => {
         const startedAt = this.clock().getTime();
         try {
-          const contribution = await ask(reviewer);
+          const contribution = await this.within(this.deadlineMs, (signal) => ask(reviewer, signal));
           // Recording is synchronous, so each reviewer's events stay contiguous.
           this.session.makeStatement(reviewer, contribution.statement, {
             durationMs: this.clock().getTime() - startedAt,
@@ -275,6 +299,24 @@ class Protocol {
       }),
     );
     return spoke;
+  }
+
+  /**
+   * The deadline is a rule of the protocol, not of an engine: the agent is
+   * told through the signal, and the round stops waiting even if it ignores it.
+   */
+  private async within<C>(milliseconds: number, ask: (signal: AbortSignal) => Promise<C>): Promise<C> {
+    const signal = AbortSignal.timeout(milliseconds);
+    let onAbort = () => {};
+    const deadline = new Promise<never>((_, reject) => {
+      onAbort = () => reject(new Error(`The reviewer did not answer within ${describeDuration(milliseconds)}.`));
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+    try {
+      return await Promise.race([ask(signal), deadline]);
+    } finally {
+      signal.removeEventListener("abort", onAbort);
+    }
   }
 
   private failReviewer(reviewer: ReviewerId, reason: string): void {

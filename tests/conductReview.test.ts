@@ -17,11 +17,19 @@ const pullRequests: DemoPullRequest[] = Array.from({ length: 6 }, (_, index) => 
 }));
 const refOf = (index: number) => pullRequests[index]!.ref;
 
-function conductReview(pace: Pace) {
+function conductReview(pace: Pace, reviewerDeadlineMs?: number) {
   const sessions = new SessionRepository(new InMemoryEventStore(), new InMemoryEventBus());
   const catalog = new PullRequestCatalog(new Map([["demo", new DemoSourceControl(pullRequests)]]));
   let id = 0;
-  return new ConductReview({ catalog, councils: [new ScriptedCouncil(pace, pullRequests)], sessions, logger: silentLogger, newId: () => `S-${++id}` });
+  const reviews = new ConductReview({
+    catalog,
+    councils: [new ScriptedCouncil(pace, pullRequests)],
+    sessions,
+    logger: silentLogger,
+    newId: () => `S-${++id}`,
+    ...(reviewerDeadlineMs ? { reviewerDeadlineMs } : {}),
+  });
+  return Object.assign(reviews, { sessions });
 }
 
 const never: Pace = () => new Promise(() => {});
@@ -39,5 +47,21 @@ describe("ConductReview", () => {
     const reviews = conductReview(never);
     await reviews.start({ ref: refOf(0), language: "en", trigger: "manual" });
     await expect(reviews.start({ ref: refOf(0), language: "pt", trigger: "webhook" })).rejects.toMatchObject({ code: "conflict" });
+  });
+
+  it("stops waiting for an engine that ignores the deadline", async () => {
+    const reviews = conductReview(never, 30);
+    const { sessionId } = await reviews.start({ ref: refOf(0), language: "en", trigger: "manual" });
+    await reviews.whenSettled(sessionId);
+    const state = await reviews.sessions.state(sessionId);
+    expect(state).toMatchObject({ status: "failed", failureReason: "No reviewer could complete the opening round" });
+    expect(state.statements.map((s) => s.text)).toEqual(Array(4).fill("The reviewer did not answer within 30 ms."));
+  });
+
+  it("fails and saves the sessions still deliberating when asked to stop", async () => {
+    const reviews = conductReview(never);
+    const { sessionId } = await reviews.start({ ref: refOf(0), language: "en", trigger: "manual" });
+    await reviews.interruptRunning("The server stopped.");
+    expect(await reviews.sessions.state(sessionId)).toMatchObject({ status: "failed", failureReason: "The server stopped." });
   });
 });

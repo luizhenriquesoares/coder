@@ -8,6 +8,7 @@ import { CoderApplication } from "../application/CoderApplication.js";
 import { ConductReview } from "../application/ConductReview.js";
 import type { CouncilAgents, Logger, SourceControl } from "../application/ports.js";
 import { PullRequestCatalog } from "../application/PullRequestCatalog.js";
+import { reconcileInterruptedSessions } from "../application/reconcileSessions.js";
 import { SessionRepository } from "../application/SessionRepository.js";
 import type { Provider } from "../domain/change/types.js";
 import { InMemoryEventBus } from "../infrastructure/bus/InMemoryEventBus.js";
@@ -89,5 +90,6 @@ export async function createServerApplication(config: ServerConfig, logger: Logg
     watchlist,
     reviewerName: config.reviewerName,
   });
+  await reconcileInterruptedSessions(sessions, logger);
   return { application, autoReview, conductReview };
 }

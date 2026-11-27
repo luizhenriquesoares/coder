@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import type { z } from "zod";
 import type {
+  AgentBrief,
   CouncilAgents,
   DebateBrief,
   DebateContribution,
@@ -11,12 +12,11 @@ import type {
   Logger,
   OpeningBrief,
   OpeningContribution,
-  ReviewContext,
   VerdictBrief,
   VerdictContribution,
 } from "../../application/ports.js";
 import { revisionKey, type PullRequestSnapshot } from "../../domain/change/types.js";
-import type { ReviewerId, Usage } from "../../domain/deliberation/model.js";
+import type { Usage } from "../../domain/deliberation/model.js";
 import { usageOf } from "./pricing.js";
 import {
   boundaryRule,
@@ -80,33 +80,33 @@ export class ClaudeCouncil implements CouncilAgents {
   }
 
   async open(brief: OpeningBrief): Promise<OpeningContribution> {
-    const { output, usage } = await this.ask(brief.persona.id, brief.context, OpeningSchema, openingTask());
+    const { output, usage } = await this.ask(brief, OpeningSchema, openingTask());
     return { statement: output.statement, findings: output.findings, usage };
   }
 
   async debate(brief: DebateBrief): Promise<DebateContribution> {
-    const { output, usage } = await this.ask(brief.persona.id, brief.context, DebateSchema, debateTask(brief));
+    const { output, usage } = await this.ask(brief, DebateSchema, debateTask(brief));
     return { statement: output.statement, positions: output.positions, usage };
   }
 
   async implement(brief: ImplementationBrief): Promise<ImplementationContribution> {
-    const { output, usage } = await this.ask(brief.persona.id, brief.context, ImplementationSchema, implementationTask(brief));
+    const { output, usage } = await this.ask(brief, ImplementationSchema, implementationTask(brief));
     return { statement: output.statement, patches: output.patches, declined: output.declined, usage };
   }
 
   async moderate(brief: VerdictBrief): Promise<VerdictContribution> {
-    const { output, usage } = await this.ask(brief.persona.id, brief.context, VerdictSchema, verdictTask(brief));
+    const { output, usage } = await this.ask(brief, VerdictSchema, verdictTask(brief));
     const { statement, ...verdict } = output;
     return { statement, verdict, usage };
   }
 
   private async ask<Schema extends z.ZodType>(
-    reviewer: ReviewerId,
-    context: ReviewContext,
+    { persona, context, signal }: AgentBrief,
     schema: Schema,
     task: string,
   ): Promise<{ output: z.infer<Schema>; usage: Usage }> {
     const { client, effort, logger } = this.options;
+    const reviewer = persona.id;
     const boundary = boundaryFor(context.snapshot);
     const prefixKey = `${revisionKey(context.snapshot.ref, context.snapshot.headSha)}:${context.language}`;
     const warmed = await this.enterWarmGate(prefixKey);
@@ -130,7 +130,7 @@ export class ClaudeCouncil implements CouncilAgents {
             ],
           },
         ],
-      });
+      }, { signal });
       // The cache entry becomes readable once the first response starts streaming.
       stream.once("streamEvent", warmed);
       const message = await stream.finalMessage();

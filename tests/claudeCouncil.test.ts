@@ -25,14 +25,21 @@ afterEach(async () => {
 });
 
 /** Runs the real ClaudeCouncil adapter, through the official SDK, against the fake Messages API. */
-async function review(reply: (request: RecordedRequest) => Reply, language: Language = "en") {
+async function review(reply: (request: RecordedRequest) => Reply, language: Language = "en", reviewerDeadlineMs?: number) {
   api = await startFakeAnthropic(reply);
   const client = new Anthropic({ apiKey: "sk-ant-test", baseURL: api.baseURL, maxRetries: 0 });
   const council = new ClaudeCouncil({ client, model: "claude-opus-5-5", effort: "high", logger: silentLogger });
   const sessions = new SessionRepository(new InMemoryEventStore(), new InMemoryEventBus());
   const catalog = new PullRequestCatalog(new Map([["demo", new DemoSourceControl()]]));
   let nextId = 0;
-  const conductReview = new ConductReview({ catalog, councils: [council], sessions, logger: silentLogger, newId: () => `s-${++nextId}` });
+  const conductReview = new ConductReview({
+    catalog,
+    councils: [council],
+    sessions,
+    logger: silentLogger,
+    newId: () => `s-${++nextId}`,
+    ...(reviewerDeadlineMs ? { reviewerDeadlineMs } : {}),
+  });
   const { sessionId } = await conductReview.start({ ref: coupon, language, trigger: "manual" });
   await conductReview.whenSettled(sessionId);
   return { state: await sessions.state(sessionId), api };
@@ -285,6 +292,20 @@ describe("Claude council against the Messages API wire format", () => {
     expect(state.failureReason).toMatch(/opening round/);
     expect(state.statements.every((s) => s.failed)).toBe(true);
     expect(state.statements[0]!.text).toBe("The Anthropic API key was rejected. Check ANTHROPIC_API_KEY.");
+  });
+});
+
+describe("a stalled reviewer", () => {
+  it("is reported as failed when it does not answer in time, and the round goes on", async () => {
+    const stalling = (request: RecordedRequest): Reply =>
+      request.round === "opening" && request.seat === "Refactoring School" ? { ...scriptedReply(request), delayMs: 5_000 } : scriptedReply(request);
+    const { state } = await review(stalling, "en", 400);
+    expect(state.status).toBe("concluded");
+    expect(state.statements.find((s) => s.round === "opening" && s.reviewer === "refactoring")).toMatchObject({
+      failed: true,
+      text: "The reviewer did not answer within 400 ms.",
+    });
+    expect(state.statements.filter((s) => s.round === "opening" && !s.failed)).toHaveLength(3);
   });
 });
 

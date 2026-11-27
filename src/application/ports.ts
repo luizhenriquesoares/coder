@@ -85,17 +85,20 @@ export interface Contribution {
   readonly usage: Usage | null;
 }
 
-export interface OpeningBrief {
+/** What every call to a reviewer carries. */
+export interface AgentBrief {
   readonly persona: Persona;
   readonly context: ReviewContext;
+  /** Aborted when the reviewer's time is up: the protocol stops waiting either way. */
+  readonly signal: AbortSignal;
 }
+
+export type OpeningBrief = AgentBrief;
 export interface OpeningContribution extends Contribution {
   readonly findings: readonly FindingDraft[];
 }
 
-export interface DebateBrief {
-  readonly persona: Persona;
-  readonly context: ReviewContext;
+export interface DebateBrief extends AgentBrief {
   readonly findings: readonly Finding[];
   readonly openingStatements: readonly Statement[];
 }
@@ -103,9 +106,7 @@ export interface DebateContribution extends Contribution {
   readonly positions: readonly PositionDraft[];
 }
 
-export interface ImplementationBrief {
-  readonly persona: Persona;
-  readonly context: ReviewContext;
+export interface ImplementationBrief extends AgentBrief {
   readonly findings: readonly Finding[];
   readonly positions: readonly Position[];
   readonly consensus: Readonly<Record<string, Consensus>>;
@@ -115,9 +116,7 @@ export interface ImplementationContribution extends Contribution {
   readonly declined: readonly { readonly findingId: string; readonly reason: string }[];
 }
 
-export interface VerdictBrief {
-  readonly persona: Persona;
-  readonly context: ReviewContext;
+export interface VerdictBrief extends AgentBrief {
   readonly findings: readonly Finding[];
   readonly positions: readonly Position[];
   readonly consensus: Readonly<Record<string, Consensus>>;
