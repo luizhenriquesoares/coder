@@ -5,7 +5,7 @@ import type { Finding, Language } from "../../../src/domain/deliberation/model.j
 import { levelOf, type SessionState } from "../../../src/domain/deliberation/state.js";
 import { relativeTime } from "../state/format.js";
 import type { Strings } from "../state/i18n.js";
-import { directory, fileName, findingsInReadingOrder, findingsOfFile, locationLabel, sameRef, worstSeverity } from "../state/selectors.js";
+import { directory, fileName, findingsInReadingOrder, findingsOfFile, inboxErrorLines, locationLabel, sameRef, worstSeverity } from "../state/selectors.js";
 import type { SideView } from "./ActivityBar.js";
 import { DiffStat, EmptyState, Icon, LevelChip } from "./primitives.js";
 
@@ -44,6 +44,16 @@ function PanelHead({ title, note }: { title: string; note?: string | undefined }
 }
 
 function PullRequestStatus({ item, t }: { item: InboxItem; t: Strings }) {
+  const { state } = item.pullRequest;
+  return (
+    <>
+      {state !== "open" ? <span className={`prstate prstate--${state}`}>{t.pullRequestState[state]}</span> : null}
+      <SessionStatus item={item} t={t} />
+    </>
+  );
+}
+
+function SessionStatus({ item, t }: { item: InboxItem; t: Strings }) {
   const session = item.latestSession;
   if (!session) return <span className="prstate prstate--none">{t.notReviewed}</span>;
   if (session.status === "in_progress") {
@@ -95,12 +105,16 @@ function PullRequests({ t, language, config, inbox, selected, onSelectPullReques
           </button>
         </form>
       ) : null}
-      {inbox?.errors.map((error) => (
-        <p key={error.provider} className="panel__alert">
-          <Icon name="alert" size={14} />
-          {error.message}
-        </p>
-      ))}
+      {inbox
+        ? inboxErrorLines(inbox.errors).map((error) => (
+            <p key={`${error.provider}:${error.message}`} className="panel__alert">
+              <Icon name="alert" size={14} />
+              <span>
+                {t.provider[error.provider]}: {error.message}
+              </span>
+            </p>
+          ))
+        : null}
       <div className="panel__scroll">
         {!inbox ? (
           <EmptyState title={t.loading} />

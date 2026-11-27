@@ -1,5 +1,5 @@
 import type { RiskLevel, RiskReason } from "../../../src/domain/change/riskAssessment.js";
-import type { FileStatus } from "../../../src/domain/change/types.js";
+import type { FileStatus, Provider, PullRequestState } from "../../../src/domain/change/types.js";
 import type { DomainEventType } from "../../../src/domain/deliberation/events.js";
 import { LANGUAGES, type Category, type ConsensusLevel, type Decision, type Language, type Round, type Severity, type Stance } from "../../../src/domain/deliberation/model.js";
 
@@ -29,6 +29,9 @@ const en = {
   sessionFailed: "Session failed",
   newCommits: "New commits",
   published: "Published",
+  pullRequestState: { open: "Open", merged: "Merged", closed: "Closed" } satisfies Record<PullRequestState, string>,
+  draft: "Draft",
+  provider: { github: "GitHub", demo: "Demo" } satisfies Record<Provider, string>,
   noFilesYet: "Select a pull request to see its files.",
   noFindingsYet: "Findings appear here once the council meets.",
   noFindingsRaised: "The council raised no findings.",
@@ -144,6 +147,8 @@ const en = {
   humanAttention: "Where a human should look",
   policyOverride: "The moderator proposed approval. Policy does not allow approving while the council endorses a blocker.",
   sessionFailedTitle: "The session failed",
+  streamLost: (reason: string) => `Live updates stopped: ${reason}`,
+  reload: "Reload",
   all: "All",
 
   publishTitle: "Publish to GitHub",
@@ -250,6 +255,9 @@ const pt: Strings = {
   sessionFailed: "Sessão falhou",
   newCommits: "Novos commits",
   published: "Publicado",
+  pullRequestState: { open: "Aberto", merged: "Mergeado", closed: "Fechado" },
+  draft: "Rascunho",
+  provider: { github: "GitHub", demo: "Demo" },
   noFilesYet: "Selecione um pull request para ver os arquivos.",
   noFindingsYet: "Os achados aparecem aqui quando o conselho se reunir.",
   noFindingsRaised: "O conselho não levantou achados.",
@@ -364,6 +372,8 @@ const pt: Strings = {
   humanAttention: "Onde um humano deve olhar",
   policyOverride: "O moderador propôs aprovar. A política não permite aprovar enquanto o conselho endossa um bloqueante.",
   sessionFailedTitle: "A sessão falhou",
+  streamLost: (reason) => `As atualizações ao vivo pararam: ${reason}`,
+  reload: "Recarregar",
   all: "Todos",
 
   publishTitle: "Publicar no GitHub",

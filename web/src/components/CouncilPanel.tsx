@@ -21,6 +21,9 @@ export interface CouncilPanelProps {
   readonly detail: PullRequestDetail | null;
   readonly session: SessionState | null;
   readonly cards: CardContext | null;
+  /** Why the live stream of the session stopped for good, if it did. */
+  readonly streamLost: string | null;
+  onReloadSession(): void;
   readonly tab: CouncilTab;
   onTab(tab: CouncilTab): void;
   readonly selectedFindingId: string | null;
@@ -96,6 +99,15 @@ export function CouncilPanel(props: CouncilPanelProps) {
         </ol>
       </header>
 
+      {props.streamLost ? (
+        <p className="banner banner--stale" role="alert">
+          <Icon name="alert" size={15} />
+          <span>{t.streamLost(props.streamLost)}</span>
+          <button type="button" className="link" onClick={props.onReloadSession}>
+            {t.reload}
+          </button>
+        </p>
+      ) : null}
       {session && cards ? (
         <>
           <div className="council__tabs" role="tablist">

@@ -310,6 +310,8 @@ export function App({ workspace, language, onLanguageChange, theme, onToggleThem
             detail={detail}
             session={session}
             cards={cards}
+            streamLost={model.streamLost}
+            onReloadSession={actions.reloadSession}
             tab={councilTab}
             onTab={setCouncilTab}
             selectedFindingId={selectedFindingId}

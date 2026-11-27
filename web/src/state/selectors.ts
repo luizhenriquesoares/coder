@@ -7,6 +7,17 @@ import { decisionKey, levelOf, type SessionState } from "../../../src/domain/del
 export const SEVERITY_RANK: Record<Severity, number> = { blocker: 0, major: 1, minor: 2, nit: 3 };
 export const LEVEL_ORDER: readonly ConsensusLevel[] = ["endorsed", "contested", "unreviewed", "rejected"];
 
+/** One line per source and message: several watched pull requests failing the same way read as one problem. */
+export function inboxErrorLines<E extends { readonly provider: string; readonly message: string }>(errors: readonly E[]): E[] {
+  const seen = new Set<string>();
+  return errors.filter((error) => {
+    const key = `${error.provider}\n${error.message}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export function sameRef(a: PullRequestRef | null, b: PullRequestRef | null): boolean {
   return a !== null && b !== null && a.provider === b.provider && a.owner === b.owner && a.repo === b.repo && a.number === b.number;
 }

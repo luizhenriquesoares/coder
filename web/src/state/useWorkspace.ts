@@ -22,7 +22,11 @@ export interface WorkspaceModel {
   readonly detail: PullRequestDetail | null;
   readonly detailError: string | null;
   readonly sessionId: string | null;
+  /** Counts the times the open session was (re)opened: each one follows its stream again from the start. */
+  readonly subscription: number;
   readonly session: SessionState | null;
+  /** The live stream of the open session ended for good, and why. */
+  readonly streamLost: string | null;
   readonly events: readonly DomainEvent[];
   readonly plan: PublicationPlan | null;
   /** Why the publication preview could not be prepared. */
@@ -41,6 +45,7 @@ export type WorkspaceAction =
   | { type: "detailFailed"; ref: PullRequestRef; message: string }
   | { type: "sessionOpened"; ref: PullRequestRef; sessionId: string }
   | { type: "event"; event: DomainEvent }
+  | { type: "streamLost"; sessionId: string; message: string }
   | { type: "plan"; sessionId: string; plan: PublicationPlan }
   | { type: "planFailed"; sessionId: string; message: string }
   | { type: "busy"; busy: WorkspaceModel["busy"] }
@@ -55,7 +60,9 @@ export const INITIAL_MODEL: WorkspaceModel = {
   detail: null,
   detailError: null,
   sessionId: null,
+  subscription: 0,
   session: null,
+  streamLost: null,
   events: [],
   plan: null,
   planError: null,
@@ -74,21 +81,32 @@ export function reduceWorkspace(model: WorkspaceModel, action: WorkspaceAction):
       return { ...model, inbox: action.inbox };
     case "selected":
       if (sameRef(model.selected, action.ref)) return model;
-      return { ...model, selected: action.ref, detail: null, detailError: null, sessionId: null, session: null, events: [], plan: null, planError: null };
+      return { ...model, selected: action.ref, detail: null, detailError: null, sessionId: null, session: null, streamLost: null, events: [], plan: null, planError: null };
     case "detail": {
       if (!sameRef(model.selected, action.ref)) return model;
       const latest = action.detail.sessions[0]?.sessionId ?? null;
       const sessionId = action.followLatest ? latest : model.sessionId;
       return sessionId === model.sessionId
         ? { ...model, detail: action.detail, detailError: null }
-        : { ...model, detail: action.detail, detailError: null, sessionId, session: null, events: [], plan: null, planError: null };
+        : { ...model, detail: action.detail, detailError: null, sessionId, session: null, streamLost: null, events: [], plan: null, planError: null };
     }
     case "detailFailed":
       return sameRef(model.selected, action.ref) ? { ...model, detailError: action.message } : model;
     case "sessionOpened":
       // The person may have moved to another pull request while the council was being convened.
       if (!sameRef(model.selected, action.ref)) return model;
-      return { ...model, sessionId: action.sessionId, session: null, events: [], plan: null, planError: null };
+      return {
+        ...model,
+        sessionId: action.sessionId,
+        subscription: model.subscription + 1,
+        session: null,
+        streamLost: null,
+        events: [],
+        plan: null,
+        planError: null,
+      };
+    case "streamLost":
+      return action.sessionId === model.sessionId ? { ...model, streamLost: action.message } : model;
     case "event": {
       const { event } = action;
       if (event.sessionId !== model.sessionId) return model;
@@ -117,6 +135,8 @@ export interface WorkspaceActions {
   decide(decision: DecisionInput): Promise<void>;
   publish(): Promise<void>;
   importPullRequest(url: string): Promise<boolean>;
+  /** Follow the open session again from its first event, after its live stream was lost. */
+  reloadSession(): void;
   /** A file read found the pull request on a newer commit: reload it, and say so. */
   pullRequestMoved(): void;
   dismissNotice(): void;
@@ -183,18 +203,23 @@ export function useWorkspace(api: CoderApi, language: Language): [WorkspaceModel
   }, [selectedKey, loadDetail]);
 
   // Follow the open session's event stream from its first event.
-  const { sessionId } = model;
+  const { sessionId, subscription } = model;
   useEffect(() => {
     if (!sessionId) return;
     let unsubscribe: (() => void) | null = null;
     let cancelled = false;
     api
-      .subscribe(sessionId, 0, (event) => {
-        dispatch({ type: "event", event });
-        if (event.type === "ReviewSessionConcluded" || event.type === "ReviewSessionFailed" || event.type === "ReviewPublished") {
-          void refreshInbox();
-        }
-      })
+      .subscribe(
+        sessionId,
+        0,
+        (event) => {
+          dispatch({ type: "event", event });
+          if (event.type === "ReviewSessionConcluded" || event.type === "ReviewSessionFailed" || event.type === "ReviewPublished") {
+            void refreshInbox();
+          }
+        },
+        (error) => !cancelled && dispatch({ type: "streamLost", sessionId, message: messageOf(error) }),
+      )
       .then(
         (stop) => (cancelled ? stop() : (unsubscribe = stop)),
         (error) => !cancelled && dispatch({ type: "notice", notice: messageOf(error) }),
@@ -203,7 +228,7 @@ export function useWorkspace(api: CoderApi, language: Language): [WorkspaceModel
       cancelled = true;
       unsubscribe?.();
     };
-  }, [api, sessionId]);
+  }, [api, sessionId, subscription]);
 
   // Keep the publication preview in step with the verdict and the human's decisions.
   const concluded = model.session?.status === "concluded";
@@ -260,6 +285,10 @@ export function useWorkspace(api: CoderApi, language: Language): [WorkspaceModel
         await refreshInbox();
         dispatch({ type: "selected", ref });
       }),
+    reloadSession: () => {
+      const { selected, sessionId: id } = latest.current;
+      if (selected && id) dispatch({ type: "sessionOpened", ref: selected, sessionId: id });
+    },
     pullRequestMoved: () => {
       const ref = latest.current.selected;
       if (!ref) return;

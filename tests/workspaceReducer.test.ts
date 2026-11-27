@@ -68,6 +68,18 @@ describe("the workspace reducer", () => {
     const wrongId = { ...elsewhere, sessionId };
     expect(replay(wrongId, events)).toBe(wrongId);
   });
+
+  it("says when the live stream was lost, and follows the session again from the start on reload", async () => {
+    const { sessionId, events } = await concludedDemoSession();
+    const live = replay(run(INITIAL_MODEL, { type: "selected", ref: COUPON }, { type: "sessionOpened", ref: COUPON, sessionId }), events.slice(0, 10));
+    const lost = run(live, { type: "streamLost", sessionId, message: "The session is gone" });
+    expect(lost.streamLost).toBe("The session is gone");
+    expect(run(live, { type: "streamLost", sessionId: "another", message: "no" })).toBe(live);
+
+    const reopened = run(lost, { type: "sessionOpened", ref: COUPON, sessionId });
+    expect(reopened).toMatchObject({ sessionId, session: null, events: [], streamLost: null, subscription: lost.subscription + 1 });
+    expect(replay(reopened, events).session?.status).toBe("concluded");
+  });
 });
 
 describe("reading a file", () => {
@@ -85,4 +97,3 @@ describe("reading a file", () => {
     expect(isConflict(new Error("boom"))).toBe(false);
   });
 });
-

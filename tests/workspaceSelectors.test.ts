@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Finding } from "../src/domain/deliberation/model.js";
 import { decisionKey, levelOf, type SessionState } from "../src/domain/deliberation/state.js";
-import { isSetAside, locationLabel, patchDiffLines, stepThrough, toggleSelection } from "../web/src/state/selectors.js";
+import { inboxErrorLines, isSetAside, locationLabel, patchDiffLines, stepThrough, toggleSelection } from "../web/src/state/selectors.js";
 import { STRINGS } from "../web/src/state/i18n.js";
 import { concludedDemoSession } from "./support/demoSession.js";
 
@@ -84,5 +84,17 @@ describe("the publish bar's wording", () => {
     expect(STRINGS.pt.outcomeChanged(plan.councilDecision, plan.decision)).toBe(
       "Suas decisões mudaram o resultado: o conselho pediu mudanças, e esta revisão será publicada como um comentário.",
     );
+  });
+});
+
+describe("the inbox's errors", () => {
+  it("shows one line per source and message, in the order they came", () => {
+    const errors = [
+      { provider: "github" as const, message: "Rate limit exceeded" },
+      { provider: "github" as const, message: "Rate limit exceeded" },
+      { provider: "demo" as const, message: "Rate limit exceeded" },
+      { provider: "github" as const, message: "Not found" },
+    ];
+    expect(inboxErrorLines(errors)).toEqual([errors[0], errors[2], errors[3]]);
   });
 });

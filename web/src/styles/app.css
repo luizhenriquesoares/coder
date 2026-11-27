@@ -859,6 +859,9 @@
 .prstate--stale {
   --tone: var(--major);
 }
+.prstate--merged {
+  --tone: var(--contested);
+}
 .prstate--published {
   padding: 0;
   background: none;

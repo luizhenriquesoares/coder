@@ -39,7 +39,8 @@ export function Overview({ t, language, config, detail, session, stale, convenin
           <p className="prhead__kicker">
             {pullRequest.ref.owner}/{pullRequest.ref.repo}
             <span className="prhead__number">#{pullRequest.ref.number}</span>
-            {pullRequest.draft ? <span className="prstate prstate--none">Draft</span> : null}
+            {pullRequest.draft ? <span className="prstate prstate--none">{t.draft}</span> : null}
+            {pullRequest.state !== "open" ? <span className={`prstate prstate--${pullRequest.state}`}>{t.pullRequestState[pullRequest.state]}</span> : null}
           </p>
           <h1 className="prhead__title">{pullRequest.title}</h1>
           <p className="prhead__merge">
