@@ -6,7 +6,8 @@
  * translate their own models into these shapes.
  */
 
-export type Provider = "github" | "demo";
+export const PROVIDERS = ["github", "demo"] as const;
+export type Provider = (typeof PROVIDERS)[number];
 
 export interface PullRequestRef {
   readonly provider: Provider;

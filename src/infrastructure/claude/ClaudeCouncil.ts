@@ -30,7 +30,8 @@ import {
 } from "./prompts.js";
 import { DebateSchema, ImplementationSchema, OpeningSchema, VerdictSchema } from "./schemas.js";
 
-export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
+export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+export type Effort = (typeof EFFORTS)[number];
 
 export interface ClaudeCouncilOptions {
   readonly client: Anthropic;

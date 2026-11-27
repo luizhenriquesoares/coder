@@ -1,5 +1,5 @@
 import type { AppConfig, PullRequestDetail } from "../../../src/application/api.js";
-import type { Language } from "../../../src/domain/deliberation/model.js";
+import { LANGUAGES, type Language } from "../../../src/domain/deliberation/model.js";
 import type { EditorTheme } from "../editor/monaco.js";
 import type { Strings } from "../state/i18n.js";
 import { Icon } from "./primitives.js";
@@ -19,7 +19,6 @@ export function BrandMark({ size = 22 }: { size?: number }) {
 }
 
 const SPEEDS = [1, 2, 4, 8] as const;
-const LANGUAGES: readonly Language[] = ["en", "pt"];
 
 export interface TitleBarProps {
   readonly t: Strings;

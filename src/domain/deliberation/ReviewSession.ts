@@ -20,6 +20,7 @@ import {
   type Round,
   type Severity,
   type Stance,
+  type Trigger,
   type Usage,
   type Verdict,
 } from "./model.js";
@@ -36,7 +37,7 @@ export interface ConveneCommand {
   readonly language: Language;
   readonly stats: ChangeStats;
   readonly risk: RiskProfile;
-  readonly trigger: "manual" | "webhook" | "poller";
+  readonly trigger: Trigger;
 }
 
 export interface FindingDraft {

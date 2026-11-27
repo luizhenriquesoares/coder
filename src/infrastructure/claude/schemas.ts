@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { CATEGORIES, SEVERITIES, STANCES } from "../../domain/deliberation/model.js";
+import { CATEGORIES, DECISIONS, MERGE_RISKS, SEVERITIES, STANCES } from "../../domain/deliberation/model.js";
+import { MAX_FINDINGS_PER_REVIEWER } from "../../domain/deliberation/ReviewSession.js";
 
 /**
  * Structured-output schemas: the contract between a reviewer agent and the
@@ -24,7 +25,7 @@ export const OpeningSchema = z.object({
         quote: z.string().describe("One line of code copied verbatim from the new version at that location, without the line-number prefix. Empty when path is null."),
       }),
     )
-    .describe("At most 8 findings, most important first. An empty list is a valid answer."),
+    .describe(`At most ${MAX_FINDINGS_PER_REVIEWER} findings, most important first. An empty list is a valid answer.`),
 });
 
 export const DebateSchema = z.object({
@@ -63,8 +64,8 @@ export const ImplementationSchema = z.object({
 
 export const VerdictSchema = z.object({
   statement,
-  decision: z.enum(["approve", "request_changes", "comment"]),
-  mergeRisk: z.enum(["low", "medium", "high"]),
+  decision: z.enum(DECISIONS),
+  mergeRisk: z.enum(MERGE_RISKS),
   summary: z.string().describe("The verdict for a busy tech lead: 3 to 6 sentences on what was found, what the council agreed on and what the patches cover."),
   humanAttention: z
     .array(z.string())

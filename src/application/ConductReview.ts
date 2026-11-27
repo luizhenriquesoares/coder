@@ -2,7 +2,7 @@ import { ChangeSet } from "../domain/change/ChangeSet.js";
 import { assessRisk } from "../domain/change/riskAssessment.js";
 import { revisionKey, type PullRequestRef, type PullRequestSnapshot } from "../domain/change/types.js";
 import type { ReviewedPullRequest } from "../domain/deliberation/events.js";
-import { DomainError, PANELISTS, type Engine, type Language, type ReviewerId } from "../domain/deliberation/model.js";
+import { DomainError, PANELISTS, type Engine, type Language, type ReviewerId, type Trigger } from "../domain/deliberation/model.js";
 import { PERSONAS } from "../domain/deliberation/personas.js";
 import { MAX_FINDINGS_PER_REVIEWER, ReviewSession, type Clock } from "../domain/deliberation/ReviewSession.js";
 import { levelOf } from "../domain/deliberation/state.js";
@@ -16,7 +16,7 @@ export interface StartReviewCommand {
   readonly ref: PullRequestRef;
   readonly language: Language;
   readonly engine?: Engine;
-  readonly trigger: "manual" | "webhook" | "poller";
+  readonly trigger: Trigger;
 }
 
 export interface ConductReviewDeps {

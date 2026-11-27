@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { LANGUAGES } from "../domain/deliberation/model.js";
+import { EFFORTS } from "../infrastructure/claude/ClaudeCouncil.js";
 import type { RepositoryName } from "../infrastructure/github/GitHubSourceControl.js";
 import { isLoopback } from "../infrastructure/http/server.js";
 
@@ -13,14 +15,14 @@ const Environment = z.object({
   CODER_API_TOKEN: z.string().min(16, "CODER_API_TOKEN must have at least 16 characters").optional(),
   CODER_DATA_DIR: z.string().default(".data"),
   CODER_DEMO: z.string().default("true"),
-  CODER_LANGUAGE: z.enum(["en", "pt"]).default("en"),
+  CODER_LANGUAGE: z.enum(LANGUAGES).default("en"),
   CODER_REVIEWER: z.string().default("human"),
 
   ANTHROPIC_API_KEY: z.string().optional(),
   ANTHROPIC_AUTH_TOKEN: z.string().optional(),
   ANTHROPIC_BASE_URL: z.string().url().optional(),
   CODER_MODEL: z.string().default("claude-opus-5-5"),
-  CODER_EFFORT: z.enum(["low", "medium", "high", "xhigh", "max"]).default("high"),
+  CODER_EFFORT: z.enum(EFFORTS).default("high"),
   CODER_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(4000).max(128000).default(32000),
 
   GITHUB_TOKEN: z.string().optional(),

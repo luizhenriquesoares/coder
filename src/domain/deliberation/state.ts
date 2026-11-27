@@ -16,6 +16,7 @@ import {
   type Position,
   type ReviewerId,
   type Round,
+  type Trigger,
   type Usage,
   type Verdict,
 } from "./model.js";
@@ -53,7 +54,7 @@ export interface SessionState {
   readonly engine: Engine;
   readonly model: string | null;
   readonly language: Language;
-  readonly trigger: "manual" | "webhook" | "poller";
+  readonly trigger: Trigger;
   readonly stats: ChangeStats;
   readonly risk: RiskProfile;
   readonly rounds: readonly Round[];

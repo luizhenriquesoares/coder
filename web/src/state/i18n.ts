@@ -1,7 +1,7 @@
 import type { RiskLevel, RiskReason } from "../../../src/domain/change/riskAssessment.js";
 import type { FileStatus } from "../../../src/domain/change/types.js";
 import type { DomainEventType } from "../../../src/domain/deliberation/events.js";
-import type { Category, ConsensusLevel, Decision, Language, Round, Severity, Stance } from "../../../src/domain/deliberation/model.js";
+import { LANGUAGES, type Category, type ConsensusLevel, type Decision, type Language, type Round, type Severity, type Stance } from "../../../src/domain/deliberation/model.js";
 
 /** Everything the workspace says, in the two languages the council speaks. */
 const en = {
@@ -428,6 +428,7 @@ const pt: Strings = {
 export const STRINGS: Record<Language, Strings> = { en, pt };
 
 export function initialLanguage(stored: string | null): Language {
-  if (stored === "en" || stored === "pt") return stored;
+  const known = LANGUAGES.find((language) => language === stored);
+  if (known) return known;
   return typeof navigator !== "undefined" && navigator.language.toLowerCase().startsWith("pt") ? "pt" : "en";
 }

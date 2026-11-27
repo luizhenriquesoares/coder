@@ -1,5 +1,5 @@
 import { refKey, revisionKey } from "../domain/change/types.js";
-import type { Language } from "../domain/deliberation/model.js";
+import type { Language, Trigger } from "../domain/deliberation/model.js";
 import type { ConductReview } from "./ConductReview.js";
 import { describeError } from "./errors.js";
 import type { Logger, PullRequestSummary } from "./ports.js";
@@ -35,7 +35,7 @@ export class AutoReview {
   constructor(private readonly deps: AutoReviewDeps) {}
 
   /** Called for a pull request event that explicitly asks for review (webhook). */
-  async consider(pullRequest: PullRequestSummary, trigger: "webhook" | "poller"): Promise<string | null> {
+  async consider(pullRequest: PullRequestSummary, trigger: Exclude<Trigger, "manual">): Promise<string | null> {
     const key = revisionKey(pullRequest.ref, pullRequest.headSha);
     if (pullRequest.draft || pullRequest.state !== "open" || this.baseline.has(key) || this.starting.has(key)) return null;
     this.starting.add(key);

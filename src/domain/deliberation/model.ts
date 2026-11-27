@@ -3,7 +3,8 @@
  * See docs/DOMAIN.md for the ubiquitous language.
  */
 
-export type Language = "en" | "pt";
+export const LANGUAGES = ["en", "pt"] as const;
+export type Language = (typeof LANGUAGES)[number];
 
 export interface Localized {
   readonly en: string;
@@ -42,7 +43,12 @@ export type Stance = (typeof STANCES)[number];
 
 export type ConsensusLevel = "endorsed" | "contested" | "rejected" | "unreviewed";
 
-export type Engine = "claude" | "scripted";
+export const ENGINES = ["claude", "scripted"] as const;
+export type Engine = (typeof ENGINES)[number];
+
+/** What started a review session. */
+export const TRIGGERS = ["manual", "webhook", "poller"] as const;
+export type Trigger = (typeof TRIGGERS)[number];
 
 /** Where a finding points. `path: null` means a general, change-wide finding. */
 export interface CodeLocation {
@@ -110,8 +116,10 @@ export interface DeclinedFinding {
   readonly reason: string;
 }
 
-export type Decision = "approve" | "request_changes" | "comment";
-export type MergeRisk = "low" | "medium" | "high";
+export const DECISIONS = ["approve", "request_changes", "comment"] as const;
+export type Decision = (typeof DECISIONS)[number];
+export const MERGE_RISKS = ["low", "medium", "high"] as const;
+export type MergeRisk = (typeof MERGE_RISKS)[number];
 
 export interface Verdict {
   readonly decision: Decision;

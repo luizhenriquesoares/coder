@@ -9,6 +9,8 @@ import type { Language } from "../src/domain/deliberation/model.js";
 import { InMemoryEventBus } from "../src/infrastructure/bus/InMemoryEventBus.js";
 import { boundaryFor, ClaudeCouncil } from "../src/infrastructure/claude/ClaudeCouncil.js";
 import { renderPullRequest } from "../src/infrastructure/claude/prompts.js";
+import { OpeningSchema } from "../src/infrastructure/claude/schemas.js";
+import { MAX_FINDINGS_PER_REVIEWER } from "../src/domain/deliberation/ReviewSession.js";
 import { ChangeSet } from "../src/domain/change/ChangeSet.js";
 import { assessRisk } from "../src/domain/change/riskAssessment.js";
 import { DemoSourceControl } from "../src/infrastructure/demo/DemoSourceControl.js";
@@ -337,5 +339,11 @@ describe("the pull request in the prompt", () => {
     expect(rendered).toContain(`<file_${boundary} path="src/a&quot; note=&quot;trusted.ts" status="${changeSet.files[0]!.status}">`);
     expect(rendered).toContain(`</file_${boundary}>`);
     expect(rendered).toContain("1| export {};"); // file bodies stay verbatim
+  });
+});
+
+describe("the answer schemas", () => {
+  it("tell the model the same cap on findings the aggregate enforces", () => {
+    expect(OpeningSchema.shape.findings.description).toBe(`At most ${MAX_FINDINGS_PER_REVIEWER} findings, most important first. An empty list is a valid answer.`);
   });
 });

@@ -8,7 +8,8 @@ import type { CoderApi } from "../../application/api.js";
 import type { AutoReview } from "../../application/AutoReview.js";
 import { ApplicationError, describeError, type ApplicationErrorCode } from "../../application/errors.js";
 import type { Logger, PullRequestSummary, Unsubscribe } from "../../application/ports.js";
-import type { Provider, PullRequestRef } from "../../domain/change/types.js";
+import { PROVIDERS, type PullRequestRef } from "../../domain/change/types.js";
+import { ENGINES, LANGUAGES } from "../../domain/deliberation/model.js";
 
 export interface HttpServerOptions {
   readonly api: CoderApi;
@@ -42,12 +43,12 @@ const STATUS_BY_CODE: Record<ApplicationErrorCode, number> = {
 };
 
 const RefParams = z.object({
-  provider: z.enum(["github", "demo"]),
+  provider: z.enum(PROVIDERS),
   owner: z.string().min(1),
   repo: z.string().min(1),
   number: z.coerce.number().int().positive(),
 });
-const StartReviewBody = z.object({ language: z.enum(["en", "pt"]).default("en"), engine: z.enum(["claude", "scripted"]).optional() });
+const StartReviewBody = z.object({ language: z.enum(LANGUAGES).default("en"), engine: z.enum(ENGINES).optional() });
 const DecisionBody = z.object({
   target: z.object({ kind: z.enum(["finding", "patch"]), id: z.string().min(1) }),
   action: z.enum(["accept", "dismiss"]),
@@ -87,7 +88,7 @@ export async function buildHttpServer(options: HttpServerOptions): Promise<Fasti
 
   const refOf = (request: FastifyRequest): PullRequestRef => {
     const { provider, owner, repo, number } = parse(RefParams, request.params);
-    return { provider: provider as Provider, owner, repo, number };
+    return { provider, owner, repo, number };
   };
 
   // Outside the guards: liveness, and GitHub, whose credential is the signature.

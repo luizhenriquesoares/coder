@@ -12,6 +12,7 @@ import type {
   Position,
   ReviewerId,
   Round,
+  Trigger,
   Usage,
   Verdict,
 } from "./model.js";
@@ -46,7 +47,7 @@ export type ReviewSessionConvened = EventEnvelope<
     readonly language: Language;
     readonly stats: ChangeStats;
     readonly risk: RiskProfile;
-    readonly trigger: "manual" | "webhook" | "poller";
+    readonly trigger: Trigger;
   }
 >;
 export type RoundStarted = EventEnvelope<"RoundStarted", { readonly round: Round }>;
