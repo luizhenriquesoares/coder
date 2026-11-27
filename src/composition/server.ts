@@ -65,7 +65,7 @@ export async function createServerApplication(config: ServerConfig, logger: Logg
 
   const catalog = new PullRequestCatalog(sources);
   const conductReview = new ConductReview({ catalog, councils, sessions, logger, newId: randomUUID });
-  const autoReview = new AutoReview({ catalog, conductReview, logger, language: config.language });
+  const autoReview = new AutoReview({ catalog, conductReview, sessions, logger, language: config.language });
 
   const appConfig: AppConfig = {
     mode: "server",
