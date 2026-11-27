@@ -2,7 +2,7 @@ import type { Finding, Language, Patch, Position, ReviewerId } from "../../../sr
 import { PERSONAS } from "../../../src/domain/deliberation/personas.js";
 import { isPublished, levelOf, type SessionState } from "../../../src/domain/deliberation/state.js";
 import type { Strings } from "../state/i18n.js";
-import { choiceFor, fileName, isSetAside, locationLabel, patchesFixing, type HumanChoice } from "../state/selectors.js";
+import { choiceFor, fileName, isSetAside, locationLabel, patchDiffLines, patchesFixing, type HumanChoice } from "../state/selectors.js";
 import { Avatar, Icon, LevelChip, RiskChip, SeverityMark } from "./primitives.js";
 
 export interface CardContext {
@@ -151,9 +151,7 @@ export function FindingCard({ finding, expanded, variant = "list", ...context }:
 }
 
 function MiniDiff({ patch }: { patch: Patch }) {
-  const lines = (text: string) => text.replace(/^\n+|\n+$/g, "").split("\n");
-  const removed = lines(patch.original);
-  const added = patch.replacement.trim() === "" ? [] : lines(patch.replacement);
+  const { removed, added } = patchDiffLines(patch);
   return (
     <pre className="minidiff">
       <code>

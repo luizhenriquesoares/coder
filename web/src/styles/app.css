@@ -2124,6 +2124,13 @@
   color: var(--major);
   font-size: var(--text-xs);
 }
+.publishbar__warning--info {
+  color: var(--fg-soft);
+}
+.publishbar__warning--info .icon {
+  flex: none;
+  color: var(--accent);
+}
 
 /* ── Bottom panel, status bar, dialogs ───────────────────────────────── */
 
@@ -2215,6 +2222,11 @@
 .publication__comment {
   display: grid;
   gap: 4px;
+}
+.publication__changed {
+  margin: 0;
+  color: var(--fg-soft);
+  font-size: var(--text-xs);
 }
 .publication__where {
   margin: 0;

@@ -215,7 +215,7 @@ function PublishBar({ t, session, plan, stale, canPublish, publishing, onPublish
           {t.reviewPublished}
         </p>
         <p className="publishbar__note">
-          {t.decision[publication.decision]} · {publication.inlineComments} {t.inlineComments.toLowerCase()}
+          {t.outcome[publication.decision]} · {publication.inlineComments} {t.inlineComments.toLowerCase()}
           {publication.simulated ? (
             <> · {t.simulated}</>
           ) : (
@@ -252,6 +252,12 @@ function PublishBar({ t, session, plan, stale, canPublish, publishing, onPublish
           </button>
         </span>
       </div>
+      {plan && plan.decision !== plan.councilDecision ? (
+        <p className="publishbar__warning publishbar__warning--info">
+          <Icon name="alert" size={14} />
+          {t.outcomeChanged(plan.councilDecision, plan.decision)}
+        </p>
+      ) : null}
       {blocked ? (
         <p className="publishbar__warning">
           <Icon name="alert" size={14} />

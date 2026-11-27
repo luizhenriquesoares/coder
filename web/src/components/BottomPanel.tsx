@@ -93,6 +93,7 @@ function Publication({ plan, t }: { plan: PublicationPlan | null; t: Strings }) 
         <h3 className="finding__label">
           {t.reviewBody} · <span className={`reviewevent reviewevent--${plan.decision}`}>{t.decision[plan.decision]}</span>
         </h3>
+        {plan.decision !== plan.councilDecision ? <p className="publication__changed">{t.outcomeChanged(plan.councilDecision, plan.decision)}</p> : null}
         <pre className="publication__text">{plan.body}</pre>
       </section>
       <section className="publication__part">

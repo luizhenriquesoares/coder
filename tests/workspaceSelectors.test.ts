@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { Finding } from "../src/domain/deliberation/model.js";
 import { decisionKey, levelOf, type SessionState } from "../src/domain/deliberation/state.js";
-import { isSetAside, locationLabel, stepThrough, toggleSelection } from "../web/src/state/selectors.js";
+import { isSetAside, locationLabel, patchDiffLines, stepThrough, toggleSelection } from "../web/src/state/selectors.js";
+import { STRINGS } from "../web/src/state/i18n.js";
 import { concludedDemoSession } from "./support/demoSession.js";
 
 const at = (path: string | null, line: number | null): Pick<Finding, "location"> => ({
@@ -45,5 +46,43 @@ describe("workspace view rules", () => {
     expect(isSetAside(state, endorsed)).toBe(false);
     expect(isSetAside(decided(state, endorsed.id, "dismiss"), endorsed)).toBe(true);
     expect(isSetAside(decided(state, rejected.id, "accept"), rejected)).toBe(false);
+  });
+});
+
+describe("the patch card's diff", () => {
+  const patch = { original: "  if (x) return 1;\n", replacement: "if (!x) return 1;" };
+
+  it("shows the lines that will be published, not the proposed text", () => {
+    expect(patchDiffLines({ ...patch, replacementLines: ["  if (!x) return 1;"] })).toEqual({
+      removed: ["  if (x) return 1;"],
+      added: ["  if (!x) return 1;"],
+    });
+  });
+
+  it("shows a deletion as no added line", () => {
+    expect(patchDiffLines({ ...patch, replacement: "", replacementLines: [] }).added).toEqual([]);
+  });
+
+  it("falls back to the proposed text when the patch could not be placed", () => {
+    expect(patchDiffLines({ ...patch, replacementLines: null }).added).toEqual(["if (!x) return 1;"]);
+  });
+});
+
+describe("the publish bar's wording", () => {
+  it("says plainly when the human's decisions changed what will be published", async () => {
+    const { application, sessionId, state } = await concludedDemoSession();
+    for (const finding of state.findings) {
+      if (levelOf(state, finding) === "endorsed" && (finding.severity === "blocker" || finding.severity === "major")) {
+        await application.decide(sessionId, { target: { kind: "finding", id: finding.id }, action: "dismiss" });
+      }
+    }
+    const plan = await application.publicationPreview(sessionId);
+    expect([plan.councilDecision, plan.decision]).toEqual(["request_changes", "comment"]);
+    expect(STRINGS.en.outcomeChanged(plan.councilDecision, plan.decision)).toBe(
+      "Your decisions changed the outcome: the council asked for changes, and this review will be published as a comment.",
+    );
+    expect(STRINGS.pt.outcomeChanged(plan.councilDecision, plan.decision)).toBe(
+      "Suas decisões mudaram o resultado: o conselho pediu mudanças, e esta revisão será publicada como um comentário.",
+    );
   });
 });

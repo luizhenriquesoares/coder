@@ -72,6 +72,18 @@ export function patchesFixing(state: SessionState, findingId: string): Patch[] {
   return state.patches.filter((patch) => patch.findingIds.includes(findingId));
 }
 
+/**
+ * The lines a patch card shows. Added lines are the patch's `replacementLines`, exactly what will be
+ * published (re-indented, empty for a deletion); the proposed text only when the patch could not be placed.
+ */
+export function patchDiffLines(patch: Pick<Patch, "original" | "replacement" | "replacementLines">): { removed: string[]; added: string[] } {
+  const lines = (text: string) => text.replace(/^\n+|\n+$/g, "").split("\n");
+  return {
+    removed: lines(patch.original),
+    added: patch.replacementLines ? [...patch.replacementLines] : patch.replacement.trim() === "" ? [] : lines(patch.replacement),
+  };
+}
+
 /** Patches the editor can preview on a file: located in it and not dismissed by the human. */
 export function previewablePatches(state: SessionState | null, path: string): Patch[] {
   if (!state) return [];

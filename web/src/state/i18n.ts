@@ -149,6 +149,10 @@ const en = {
   publishTitle: "Publish to GitHub",
   publishSummary: (comments: number, suggestions: number) =>
     `${comments} inline ${comments === 1 ? "comment" : "comments"} · ${suggestions} ${suggestions === 1 ? "suggestion" : "suggestions"}`,
+  outcomeChanged: (council: Decision, published: Decision) =>
+    `Your decisions changed the outcome: the council ${
+      { approve: "approved the change", request_changes: "asked for changes", comment: "left a comment" }[council]
+    }, and this review will be published as ${{ approve: "an approval", request_changes: "a request for changes", comment: "a comment" }[published]}.`,
   publish: "Publish review",
   publishing: "Publishing…",
   preview: "Preview",
@@ -360,6 +364,10 @@ const pt: Strings = {
   publishTitle: "Publicar no GitHub",
   publishSummary: (comments, suggestions) =>
     `${comments} ${comments === 1 ? "comentário em linha" : "comentários em linha"} · ${suggestions} ${suggestions === 1 ? "sugestão" : "sugestões"}`,
+  outcomeChanged: (council, published) =>
+    `Suas decisões mudaram o resultado: o conselho ${
+      { approve: "aprovou a mudança", request_changes: "pediu mudanças", comment: "deixou um comentário" }[council]
+    }, e esta revisão será publicada como ${{ approve: "uma aprovação", request_changes: "um pedido de mudanças", comment: "um comentário" }[published]}.`,
   publish: "Publicar revisão",
   publishing: "Publicando…",
   preview: "Pré-visualizar",
