@@ -7,6 +7,7 @@ import type { Engine, Language } from "../../../src/domain/deliberation/model.js
 import type { PublicationPlan } from "../../../src/domain/deliberation/publicationPlanner.js";
 import { evolve, foldEvents, type SessionState } from "../../../src/domain/deliberation/state.js";
 import { ApiError } from "../api/HttpCoderApi.js";
+import { STRINGS } from "./i18n.js";
 import { sameRef } from "./selectors.js";
 
 const INBOX_REFRESH_MS = 15_000;
@@ -38,7 +39,7 @@ export type WorkspaceAction =
   | { type: "selected"; ref: PullRequestRef }
   | { type: "detail"; ref: PullRequestRef; detail: PullRequestDetail; followLatest: boolean }
   | { type: "detailFailed"; ref: PullRequestRef; message: string }
-  | { type: "sessionOpened"; sessionId: string | null }
+  | { type: "sessionOpened"; ref: PullRequestRef; sessionId: string }
   | { type: "event"; event: DomainEvent }
   | { type: "plan"; sessionId: string; plan: PublicationPlan }
   | { type: "planFailed"; sessionId: string; message: string }
@@ -85,10 +86,13 @@ export function reduceWorkspace(model: WorkspaceModel, action: WorkspaceAction):
     case "detailFailed":
       return sameRef(model.selected, action.ref) ? { ...model, detailError: action.message } : model;
     case "sessionOpened":
+      // The person may have moved to another pull request while the council was being convened.
+      if (!sameRef(model.selected, action.ref)) return model;
       return { ...model, sessionId: action.sessionId, session: null, events: [], plan: null, planError: null };
     case "event": {
       const { event } = action;
       if (event.sessionId !== model.sessionId) return model;
+      if (event.type === "ReviewSessionConvened" && !sameRef(model.selected, event.payload.pullRequest.ref)) return model;
       if (model.session && event.seq <= model.session.lastSeq) return model; // replayed after a reconnect
       const session = model.session ? evolve(model.session, event) : event.type === "ReviewSessionConvened" ? foldEvents([event]) : null;
       return session ? { ...model, session, events: [...model.events, event] } : model;
@@ -113,6 +117,8 @@ export interface WorkspaceActions {
   decide(decision: DecisionInput): Promise<void>;
   publish(): Promise<void>;
   importPullRequest(url: string): Promise<boolean>;
+  /** A file read found the pull request on a newer commit: reload it, and say so. */
+  pullRequestMoved(): void;
   dismissNotice(): void;
 }
 
@@ -235,7 +241,7 @@ export function useWorkspace(api: CoderApi, language: Language): [WorkspaceModel
       if (!ref) return;
       await attempt("convening", async () => {
         const started = await api.startReview(ref, { language, ...(engine ? { engine } : {}) });
-        dispatch({ type: "sessionOpened", sessionId: started.sessionId });
+        dispatch({ type: "sessionOpened", ref, sessionId: started.sessionId });
         void refreshInbox();
         void loadDetail(ref, false);
       });
@@ -254,19 +260,33 @@ export function useWorkspace(api: CoderApi, language: Language): [WorkspaceModel
         await refreshInbox();
         dispatch({ type: "selected", ref });
       }),
+    pullRequestMoved: () => {
+      const ref = latest.current.selected;
+      if (!ref) return;
+      dispatch({ type: "notice", notice: STRINGS[language].pullRequestReloaded });
+      void loadDetail(ref, false);
+    },
     dismissNotice: () => dispatch({ type: "notice", notice: null }),
   };
   return [model, actions];
 }
 
-/** Both sides of a file at the reviewed commit. Cached: a blob at a commit never changes. */
+/** True for an error that says the request met a newer state than the one it was made for. */
+export function isConflict(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "conflict";
+}
+
+/**
+ * Both sides of a file at `headSha`, the commit the pull request was loaded at. Cached: a blob at a
+ * commit never changes. Rejects with a conflict (`isConflict`) when the pull request has moved on.
+ */
 const fileCache = new Map<string, Promise<FileContents>>();
 
 export function loadFile(api: CoderApi, ref: PullRequestRef, headSha: string, path: string): Promise<FileContents> {
   const key = `${revisionKey(ref, headSha)}:${path}`;
   let cached = fileCache.get(key);
   if (!cached) {
-    cached = api.fileContents(ref, path);
+    cached = api.fileContents(ref, path, headSha);
     fileCache.set(key, cached);
     cached.catch(() => fileCache.delete(key));
   }

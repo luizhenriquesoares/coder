@@ -17,7 +17,7 @@ import { TitleBar } from "./components/TitleBar.js";
 import type { EditorTheme } from "./editor/monaco.js";
 import { STRINGS } from "./state/i18n.js";
 import { decisionsOpen } from "../../src/domain/deliberation/state.js";
-import { choiceFor, findingsInReadingOrder, stepThrough, toggleSelection } from "./state/selectors.js";
+import { choiceFor, findingsInReadingOrder, reviewedAnotherCommit, stepThrough, toggleSelection } from "./state/selectors.js";
 import { useMediaQuery, useStoredFlag } from "./state/useUi.js";
 import { useWorkspace } from "./state/useWorkspace.js";
 
@@ -195,7 +195,7 @@ export function App({ workspace, language, onLanguageChange, theme, onToggleThem
   }
 
   const activeFile = activePath ? (detail?.files.find((file) => file.path === activePath) ?? null) : null;
-  const stale = Boolean(session && detail && session.pullRequest.headSha !== detail.pullRequest.headSha);
+  const stale = reviewedAnotherCommit(session, detail?.pullRequest.headSha ?? null);
   const canPublish = model.selected?.provider === "demo" || model.config.github.canPublish;
   const selectedFinding = session?.findings.find((finding) => finding.id === selectedFindingId) ?? null;
   const pendingDecision = selectedFinding && session ? choiceFor(session, "finding", selectedFinding.id) : null;
@@ -268,6 +268,10 @@ export function App({ workspace, language, onLanguageChange, theme, onToggleThem
                 detail={detail}
                 file={activeFile}
                 session={session}
+                stale={stale}
+                convening={model.busy === "convening"}
+                onConvene={convene}
+                onPullRequestMoved={actions.pullRequestMoved}
                 cards={cards}
                 sideBySide={sideBySide}
                 onSideBySide={setSideBySide}

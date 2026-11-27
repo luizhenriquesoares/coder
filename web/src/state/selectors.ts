@@ -11,6 +11,11 @@ export function sameRef(a: PullRequestRef | null, b: PullRequestRef | null): boo
   return a !== null && b !== null && a.provider === b.provider && a.owner === b.owner && a.repo === b.repo && a.number === b.number;
 }
 
+/** The session reviewed another commit than the one on screen: none of it may be drawn over this code. */
+export function reviewedAnotherCommit(session: SessionState | null, headSha: string | null): boolean {
+  return session !== null && headSha !== null && session.pullRequest.headSha !== headSha;
+}
+
 export type HumanChoice = "accept" | "dismiss" | null;
 
 export function choiceFor(state: SessionState, kind: "finding" | "patch", id: string): HumanChoice {

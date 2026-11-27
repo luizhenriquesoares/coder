@@ -532,6 +532,12 @@
 .banner--warn .icon {
   color: var(--major);
 }
+.banner--stale {
+  background: color-mix(in srgb, var(--major) 12%, transparent);
+}
+.banner--stale .icon {
+  color: var(--major);
+}
 
 .callout {
   display: grid;

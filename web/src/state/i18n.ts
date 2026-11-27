@@ -163,6 +163,8 @@ const en = {
   simulated: "Simulated in demo mode: nothing was sent to GitHub.",
   needsGitHubToken: "Set GITHUB_TOKEN on the server to publish.",
   staleSession: "This pull request has new commits. Convene the council again before publishing.",
+  staleFile: "This pull request has new commits since the council's review, so its findings and patches are not shown on this file.",
+  pullRequestReloaded: "This pull request has new commits. It was reloaded.",
 
   sideBySide: "Side by side",
   inline: "Inline",
@@ -381,6 +383,8 @@ const pt: Strings = {
   simulated: "Simulado no modo demo: nada foi enviado ao GitHub.",
   needsGitHubToken: "Defina GITHUB_TOKEN no servidor para publicar.",
   staleSession: "Este pull request tem novos commits. Convoque o conselho de novo antes de publicar.",
+  staleFile: "Este pull request tem novos commits desde a revisão do conselho, por isso os achados e patches não aparecem neste arquivo.",
+  pullRequestReloaded: "Este pull request tem novos commits. Ele foi recarregado.",
 
   sideBySide: "Lado a lado",
   inline: "Em linha",

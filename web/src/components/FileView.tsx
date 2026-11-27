@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { CoderApi, PullRequestDetail } from "../../../src/application/api.js";
 import type { FileChange, FileContents } from "../../../src/domain/change/types.js";
 import { applyPatches } from "../../../src/domain/deliberation/patching.js";
@@ -7,7 +7,7 @@ import { DiffView, type LineMarker } from "../editor/DiffView.js";
 import type { EditorTheme } from "../editor/monaco.js";
 import type { Strings } from "../state/i18n.js";
 import { directory, fileName, findingsOfFile, isInsideHunk, isSetAside, previewablePatches, stepThrough, toggleSelection } from "../state/selectors.js";
-import { loadFile } from "../state/useWorkspace.js";
+import { isConflict, loadFile } from "../state/useWorkspace.js";
 import { FindingCard, type CardContext } from "./cards.js";
 import { DiffStat, EmptyState, Icon } from "./primitives.js";
 
@@ -21,6 +21,12 @@ export interface FileViewProps {
   readonly detail: PullRequestDetail;
   readonly file: FileChange;
   readonly session: SessionState | null;
+  /** The session reviewed another commit: nothing of it is drawn on this file. */
+  readonly stale: boolean;
+  readonly convening: boolean;
+  onConvene(): void;
+  /** Reading the file found the pull request on a newer commit. */
+  onPullRequestMoved(): void;
   readonly cards: CardContext | null;
   readonly sideBySide: boolean;
   onSideBySide(value: boolean): void;
@@ -36,15 +42,22 @@ export interface FileViewProps {
 
 type Loaded = { readonly contents: FileContents | null; readonly error: string | null };
 
-function useFileContents(api: CoderApi, detail: PullRequestDetail, path: string): Loaded {
+function useFileContents(api: CoderApi, detail: PullRequestDetail, path: string, onMoved: () => void): Loaded {
   const { ref, headSha } = detail.pullRequest;
   const [loaded, setLoaded] = useState<Loaded>({ contents: null, error: null });
+  const moved = useRef(onMoved);
+  moved.current = onMoved;
   useEffect(() => {
     let cancelled = false;
     setLoaded({ contents: null, error: null });
     loadFile(api, ref, headSha, path).then(
       (contents) => !cancelled && setLoaded({ contents, error: null }),
-      (error: unknown) => !cancelled && setLoaded({ contents: null, error: error instanceof Error ? error.message : String(error) }),
+      (error: unknown) => {
+        if (cancelled) return;
+        // Never draw a newer file under markers placed on the commit this view was loaded at: reload instead.
+        if (isConflict(error)) return moved.current();
+        setLoaded({ contents: null, error: error instanceof Error ? error.message : String(error) });
+      },
     );
     return () => {
       cancelled = true;
@@ -56,8 +69,10 @@ function useFileContents(api: CoderApi, detail: PullRequestDetail, path: string)
 
 /** One changed file: the diff, with the council's findings on the lines they are about. */
 export function FileView(props: FileViewProps) {
-  const { api, t, theme, detail, file, session, cards, sideBySide, collapseUnchanged, diffMode, selectedFindingId } = props;
-  const { contents, error } = useFileContents(api, detail, file.path);
+  const { api, t, theme, detail, file, session: current, stale, cards, sideBySide, collapseUnchanged, diffMode, selectedFindingId } = props;
+  const { contents, error } = useFileContents(api, detail, file.path, props.onPullRequestMoved);
+  // A session is never drawn over code it did not review.
+  const session = stale ? null : current;
 
   const findings = useMemo(
     () => findingsOfFile(session, file.path).sort((a, b) => (a.location.line ?? 0) - (b.location.line ?? 0)),
@@ -172,6 +187,16 @@ export function FileView(props: FileViewProps) {
             ))}
           </span>
         </div>
+      ) : null}
+
+      {stale ? (
+        <p className="banner banner--stale">
+          <Icon name="alert" size={15} />
+          <span>{t.staleFile}</span>
+          <button type="button" className="link" disabled={props.convening} onClick={props.onConvene}>
+            {props.convening ? t.convening : t.conveneAgain}
+          </button>
+        </p>
       ) : null}
 
       {patched ? (
