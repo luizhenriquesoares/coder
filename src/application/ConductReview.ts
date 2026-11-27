@@ -1,9 +1,10 @@
 import { ChangeSet } from "../domain/change/ChangeSet.js";
 import { assessRisk } from "../domain/change/riskAssessment.js";
 import type { PullRequestRef, PullRequestSnapshot } from "../domain/change/types.js";
+import type { ReviewedPullRequest } from "../domain/deliberation/events.js";
 import { DomainError, PANELISTS, type Engine, type Language, type ReviewerId } from "../domain/deliberation/model.js";
 import { PERSONAS } from "../domain/deliberation/personas.js";
-import { MAX_FINDINGS_PER_REVIEWER, ReviewSession } from "../domain/deliberation/ReviewSession.js";
+import { MAX_FINDINGS_PER_REVIEWER, ReviewSession, type Clock } from "../domain/deliberation/ReviewSession.js";
 import { ApplicationError, describeError } from "./errors.js";
 import { fallbackVerdict } from "./fallbackVerdict.js";
 import type { Contribution, CouncilAgents, Logger, ReviewContext } from "./ports.js";
@@ -23,6 +24,8 @@ export interface ConductReviewDeps {
   readonly sessions: SessionRepository;
   readonly logger: Logger;
   readonly newId: () => string;
+  /** Defaults to the wall clock. The demo replaces it to replay a session in simulated time. */
+  readonly clock?: Clock;
 }
 
 /**
@@ -31,8 +34,11 @@ export interface ConductReviewDeps {
  */
 export class ConductReview {
   private readonly running = new Map<string, Promise<void>>();
+  private readonly clock: Clock;
 
-  constructor(private readonly deps: ConductReviewDeps) {}
+  constructor(private readonly deps: ConductReviewDeps) {
+    this.clock = deps.clock ?? (() => new Date());
+  }
 
   /** Convenes the session and returns immediately; the council deliberates in the background. */
   async start(command: StartReviewCommand): Promise<{ sessionId: string }> {
@@ -42,24 +48,19 @@ export class ConductReview {
     const changeSet = ChangeSet.fromSnapshot(snapshot);
     const risk = assessRisk(changeSet);
 
-    const session = ReviewSession.convene({
-      id: newId(),
-      pullRequest: {
-        ref: snapshot.ref,
-        title: snapshot.title,
-        author: snapshot.author.login,
-        url: snapshot.url,
-        baseBranch: snapshot.baseBranch,
-        headBranch: snapshot.headBranch,
-        headSha: snapshot.headSha,
+    const session = ReviewSession.convene(
+      {
+        id: newId(),
+        pullRequest: reviewedPullRequest(snapshot),
+        engine: agents.engine,
+        model: agents.model,
+        language: command.language,
+        stats: changeSet.stats,
+        risk,
+        trigger: command.trigger,
       },
-      engine: agents.engine,
-      model: agents.model,
-      language: command.language,
-      stats: changeSet.stats,
-      risk,
-      trigger: command.trigger,
-    });
+      this.clock,
+    );
     sessions.add(session);
     await sessions.save(session);
 
@@ -105,7 +106,7 @@ export class ConductReview {
         partial.risk.reviewOrder,
       );
       const context: ReviewContext = { ...partial, headContents: contents, diffOnly };
-      const protocol = new Protocol(session, agents, context, save, this.deps.logger);
+      const protocol = new Protocol(session, agents, context, save, this.deps.logger, this.clock);
       await protocol.opening();
       await protocol.debate();
       await protocol.implementation();
@@ -119,6 +120,11 @@ export class ConductReview {
   }
 }
 
+function reviewedPullRequest(snapshot: PullRequestSnapshot): ReviewedPullRequest {
+  const { ref, title, author, url, baseBranch, headBranch, headSha } = snapshot;
+  return { ref, title, author: author.login, url, baseBranch, headBranch, headSha };
+}
+
 /** One run of the deliberation protocol over one session. */
 class Protocol {
   constructor(
@@ -127,6 +133,7 @@ class Protocol {
     private readonly context: ReviewContext,
     private readonly save: () => Promise<void>,
     private readonly logger: Logger,
+    private readonly clock: Clock,
   ) {}
 
   async opening(): Promise<void> {
@@ -228,12 +235,12 @@ class Protocol {
     const spoke = new Map<ReviewerId, C>();
     await Promise.all(
       reviewers.map(async (reviewer) => {
-        const startedAt = Date.now();
+        const startedAt = this.clock().getTime();
         try {
           const contribution = await ask(reviewer);
           // Recording is synchronous, so each reviewer's events stay contiguous.
           this.session.makeStatement(reviewer, contribution.statement, {
-            durationMs: Date.now() - startedAt,
+            durationMs: this.clock().getTime() - startedAt,
             usage: contribution.usage,
           });
           record(reviewer, contribution);

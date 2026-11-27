@@ -1,0 +1,267 @@
+import { useCallback, useEffect, useReducer, useRef } from "react";
+import type { AppConfig, CoderApi, DecisionInput, Inbox, PullRequestDetail } from "../../../src/application/api.js";
+import type { FileContents, PullRequestRef } from "../../../src/domain/change/types.js";
+import { refKey } from "../../../src/domain/change/types.js";
+import type { DomainEvent } from "../../../src/domain/deliberation/events.js";
+import type { Engine, Language } from "../../../src/domain/deliberation/model.js";
+import type { PublicationPlan } from "../../../src/domain/deliberation/publicationPlanner.js";
+import { evolve, foldEvents, type SessionState } from "../../../src/domain/deliberation/state.js";
+import { ApiError } from "../api/HttpCoderApi.js";
+import { sameRef } from "./selectors.js";
+
+const INBOX_REFRESH_MS = 15_000;
+
+export interface WorkspaceModel {
+  readonly config: AppConfig | null;
+  readonly inbox: Inbox | null;
+  /** The workspace could not load at all (server down, or it wants a token). */
+  readonly loadError: string | null;
+  readonly needsToken: boolean;
+  readonly selected: PullRequestRef | null;
+  readonly detail: PullRequestDetail | null;
+  readonly detailError: string | null;
+  readonly sessionId: string | null;
+  readonly session: SessionState | null;
+  readonly events: readonly DomainEvent[];
+  readonly plan: PublicationPlan | null;
+  readonly busy: "convening" | "publishing" | "importing" | null;
+  /** The last action that failed, shown until dismissed. */
+  readonly notice: string | null;
+}
+
+type Action =
+  | { type: "loaded"; config: AppConfig; inbox: Inbox }
+  | { type: "loadFailed"; message: string; needsToken: boolean }
+  | { type: "inbox"; inbox: Inbox }
+  | { type: "selected"; ref: PullRequestRef }
+  | { type: "detail"; ref: PullRequestRef; detail: PullRequestDetail; followLatest: boolean }
+  | { type: "detailFailed"; ref: PullRequestRef; message: string }
+  | { type: "sessionOpened"; sessionId: string | null }
+  | { type: "event"; event: DomainEvent }
+  | { type: "plan"; sessionId: string; plan: PublicationPlan | null }
+  | { type: "busy"; busy: WorkspaceModel["busy"] }
+  | { type: "notice"; notice: string | null };
+
+const INITIAL: WorkspaceModel = {
+  config: null,
+  inbox: null,
+  loadError: null,
+  needsToken: false,
+  selected: null,
+  detail: null,
+  detailError: null,
+  sessionId: null,
+  session: null,
+  events: [],
+  plan: null,
+  busy: null,
+  notice: null,
+};
+
+function reduce(model: WorkspaceModel, action: Action): WorkspaceModel {
+  switch (action.type) {
+    case "loaded":
+      return { ...model, config: action.config, inbox: action.inbox, loadError: null, needsToken: false };
+    case "loadFailed":
+      return { ...model, loadError: action.message, needsToken: action.needsToken };
+    case "inbox":
+      return { ...model, inbox: action.inbox };
+    case "selected":
+      if (sameRef(model.selected, action.ref)) return model;
+      return { ...model, selected: action.ref, detail: null, detailError: null, sessionId: null, session: null, events: [], plan: null };
+    case "detail": {
+      if (!sameRef(model.selected, action.ref)) return model;
+      const latest = action.detail.sessions[0]?.sessionId ?? null;
+      const sessionId = action.followLatest ? latest : model.sessionId;
+      return sessionId === model.sessionId
+        ? { ...model, detail: action.detail, detailError: null }
+        : { ...model, detail: action.detail, detailError: null, sessionId, session: null, events: [], plan: null };
+    }
+    case "detailFailed":
+      return sameRef(model.selected, action.ref) ? { ...model, detailError: action.message } : model;
+    case "sessionOpened":
+      return { ...model, sessionId: action.sessionId, session: null, events: [], plan: null };
+    case "event": {
+      const { event } = action;
+      if (event.sessionId !== model.sessionId) return model;
+      if (model.session && event.seq <= model.session.lastSeq) return model; // replayed after a reconnect
+      const session = model.session ? evolve(model.session, event) : event.type === "ReviewSessionConvened" ? foldEvents([event]) : null;
+      return session ? { ...model, session, events: [...model.events, event] } : model;
+    }
+    case "plan":
+      return action.sessionId === model.sessionId ? { ...model, plan: action.plan } : model;
+    case "busy":
+      return { ...model, busy: action.busy };
+    case "notice":
+      return { ...model, notice: action.notice };
+  }
+}
+
+const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+export interface WorkspaceActions {
+  reload(): void;
+  select(ref: PullRequestRef): void;
+  convene(engine?: Engine): Promise<void>;
+  decide(decision: DecisionInput): Promise<void>;
+  publish(): Promise<void>;
+  importPullRequest(url: string): Promise<boolean>;
+  dismissNotice(): void;
+}
+
+/**
+ * The workspace's connection to the application: what is loaded, which pull
+ * request and session are open, and the live session state, rebuilt in the
+ * browser by folding the same events the server folds.
+ */
+export function useWorkspace(api: CoderApi, language: Language): [WorkspaceModel, WorkspaceActions] {
+  const [model, dispatch] = useReducer(reduce, INITIAL);
+  const latest = useRef(model);
+  latest.current = model;
+
+  const load = useCallback(async () => {
+    try {
+      const [config, inbox] = await Promise.all([api.config(), api.inbox()]);
+      dispatch({ type: "loaded", config, inbox });
+    } catch (error) {
+      dispatch({ type: "loadFailed", message: messageOf(error), needsToken: error instanceof ApiError && error.status === 401 });
+    }
+  }, [api]);
+
+  const refreshInbox = useCallback(async () => {
+    try {
+      dispatch({ type: "inbox", inbox: await api.inbox() });
+    } catch {
+      // The next refresh will try again; a stale inbox is better than an error banner every few seconds.
+    }
+  }, [api]);
+
+  useEffect(() => void load(), [load]);
+
+  // New pull requests and automatic reviews show up without a reload.
+  const serverMode = model.config?.mode === "server";
+  useEffect(() => {
+    if (!serverMode) return;
+    const timer = setInterval(() => void refreshInbox(), INBOX_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [serverMode, refreshInbox]);
+
+  // Open the first pull request once the inbox arrives.
+  const firstRef = model.inbox?.items[0]?.pullRequest.ref ?? null;
+  useEffect(() => {
+    if (!latest.current.selected && firstRef) dispatch({ type: "selected", ref: firstRef });
+  }, [firstRef]);
+
+  const loadDetail = useCallback(
+    async (ref: PullRequestRef, followLatest: boolean) => {
+      try {
+        dispatch({ type: "detail", ref, detail: await api.pullRequest(ref), followLatest });
+      } catch (error) {
+        dispatch({ type: "detailFailed", ref, message: messageOf(error) });
+      }
+    },
+    [api],
+  );
+
+  const selectedKey = model.selected ? refKey(model.selected) : null;
+  useEffect(() => {
+    const ref = latest.current.selected;
+    if (ref) void loadDetail(ref, true);
+  }, [selectedKey, loadDetail]);
+
+  // Follow the open session's event stream from its first event.
+  const { sessionId } = model;
+  useEffect(() => {
+    if (!sessionId) return;
+    let unsubscribe: (() => void) | null = null;
+    let cancelled = false;
+    api
+      .subscribe(sessionId, 0, (event) => {
+        dispatch({ type: "event", event });
+        if (event.type === "ReviewSessionConcluded" || event.type === "ReviewSessionFailed" || event.type === "ReviewPublished") {
+          void refreshInbox();
+        }
+      })
+      .then(
+        (stop) => (cancelled ? stop() : (unsubscribe = stop)),
+        (error) => !cancelled && dispatch({ type: "notice", notice: messageOf(error) }),
+      );
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
+  }, [api, sessionId]);
+
+  // Keep the publication preview in step with the verdict and the human's decisions.
+  const concluded = model.session?.status === "concluded";
+  const decisions = model.session?.decisions;
+  useEffect(() => {
+    if (!sessionId || !concluded) return;
+    let cancelled = false;
+    api.publicationPreview(sessionId).then(
+      (plan) => !cancelled && dispatch({ type: "plan", sessionId, plan }),
+      () => !cancelled && dispatch({ type: "plan", sessionId, plan: null }), // e.g. the pull request moved on
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [api, sessionId, concluded, decisions]);
+
+  const attempt = useCallback(async (busy: WorkspaceModel["busy"], action: () => Promise<void>): Promise<boolean> => {
+    if (busy) dispatch({ type: "busy", busy });
+    try {
+      await action();
+      return true;
+    } catch (error) {
+      dispatch({ type: "notice", notice: messageOf(error) });
+      return false;
+    } finally {
+      if (busy) dispatch({ type: "busy", busy: null });
+    }
+  }, []);
+
+  const actions: WorkspaceActions = {
+    reload: () => void load(),
+    select: (ref) => dispatch({ type: "selected", ref }),
+    convene: async (engine) => {
+      const ref = latest.current.selected;
+      if (!ref) return;
+      await attempt("convening", async () => {
+        const started = await api.startReview(ref, { language, ...(engine ? { engine } : {}) });
+        dispatch({ type: "sessionOpened", sessionId: started.sessionId });
+        void refreshInbox();
+        void loadDetail(ref, false);
+      });
+    },
+    decide: async (decision) => {
+      const id = latest.current.sessionId;
+      if (id) await attempt(null, async () => void (await api.decide(id, decision)));
+    },
+    publish: async () => {
+      const id = latest.current.sessionId;
+      if (id) await attempt("publishing", async () => void (await api.publish(id)));
+    },
+    importPullRequest: (url) =>
+      attempt("importing", async () => {
+        const ref = await api.importPullRequest(url);
+        await refreshInbox();
+        dispatch({ type: "selected", ref });
+      }),
+    dismissNotice: () => dispatch({ type: "notice", notice: null }),
+  };
+  return [model, actions];
+}
+
+/** Both sides of a file at the reviewed commit. Cached: a blob at a commit never changes. */
+const fileCache = new Map<string, Promise<FileContents>>();
+
+export function loadFile(api: CoderApi, ref: PullRequestRef, headSha: string, path: string): Promise<FileContents> {
+  const key = `${refKey(ref)}@${headSha}:${path}`;
+  let cached = fileCache.get(key);
+  if (!cached) {
+    cached = api.fileContents(ref, path);
+    fileCache.set(key, cached);
+    cached.catch(() => fileCache.delete(key));
+  }
+  return cached;
+}

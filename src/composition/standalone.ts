@@ -7,12 +7,14 @@ import { SessionRepository } from "../application/SessionRepository.js";
 import type { Provider } from "../domain/change/types.js";
 import { InMemoryEventBus } from "../infrastructure/bus/InMemoryEventBus.js";
 import { DemoSourceControl } from "../infrastructure/demo/DemoSourceControl.js";
+import type { Clock } from "../domain/deliberation/ReviewSession.js";
 import { realTimePace, ScriptedCouncil, type Pace } from "../infrastructure/demo/ScriptedCouncil.js";
 import { InMemoryEventStore } from "../infrastructure/persistence/InMemoryEventStore.js";
 import { InMemoryWatchlist } from "../infrastructure/persistence/inMemoryWatchlist.js";
 
 export interface StandaloneOptions {
   readonly pace?: Pace;
+  readonly clock?: Clock;
   readonly logger?: Logger;
 }
 
@@ -26,7 +28,8 @@ export function createStandaloneApplication(options: StandaloneOptions = {}) {
   const store = new InMemoryEventStore();
   const bus = new InMemoryEventBus();
   const sessions = new SessionRepository(store, bus);
-  const sources = new Map<Provider, SourceControl>([["demo", new DemoSourceControl()]]);
+  const clock = options.clock ?? (() => new Date());
+  const sources = new Map<Provider, SourceControl>([["demo", new DemoSourceControl(undefined, () => clock().getTime())]]);
   const catalog = new PullRequestCatalog(sources);
   const conductReview = new ConductReview({
     catalog,
@@ -34,6 +37,7 @@ export function createStandaloneApplication(options: StandaloneOptions = {}) {
     sessions,
     logger,
     newId: () => globalThis.crypto.randomUUID(),
+    clock,
   });
   const config: AppConfig = {
     mode: "standalone",
