@@ -12,6 +12,8 @@ import type { DomainEvent } from "../src/domain/deliberation/events.js";
 import type { PublicationPlan } from "../src/domain/deliberation/publicationPlanner.js";
 import type { SessionState } from "../src/domain/deliberation/state.js";
 import { buildHttpServer } from "../src/infrastructure/http/server.js";
+import { HttpCoderApi } from "../web/src/api/HttpCoderApi.js";
+import { followUntilConcluded as follow } from "./support/follow.js";
 import { startFakeAnthropic, type FakeAnthropic, type RecordedRequest, type Reply } from "./support/fakeAnthropic.js";
 import { startFakeGitHub, type FakeGitHub, type FakePullRequest } from "./support/fakeGitHub.js";
 
@@ -150,27 +152,9 @@ async function call<T>(path: string, init: RequestInit & { token?: string | null
   return { status: response.status, body: (await response.json()) as T };
 }
 
-/** Reads the session's server-sent events until the council concludes. */
-async function followUntilConcluded(sessionId: string, afterSeq = 0): Promise<DomainEvent[]> {
-  const response = await fetch(`${running!.url}/api/sessions/${sessionId}/events?after=${afterSeq}`, { headers: { authorization: `Bearer ${API_TOKEN}` } });
-  expect(response.headers.get("content-type")).toBe("text/event-stream");
-  const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
-  const events: DomainEvent[] = [];
-  let buffer = "";
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += value;
-    const frames = buffer.split("\n\n");
-    buffer = frames.pop()!;
-    for (const frame of frames) {
-      const data = frame.split("\n").find((line) => line.startsWith("data: "));
-      if (data) events.push(JSON.parse(data.slice(6)) as DomainEvent);
-    }
-    if (events.some((event) => event.type === "ReviewSessionConcluded" || event.type === "ReviewSessionFailed")) break;
-  }
-  await reader.cancel();
-  return events;
+/** Follows the session through the workspace's own HTTP client until the council concludes. */
+function followUntilConcluded(sessionId: string, afterSeq = 0): Promise<DomainEvent[]> {
+  return follow(new HttpCoderApi(running!.url, () => API_TOKEN), sessionId, afterSeq);
 }
 
 const PULL = "/api/pulls/github/acme/shop/7";

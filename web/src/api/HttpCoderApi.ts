@@ -79,7 +79,12 @@ export class HttpCoderApi implements CoderApi {
    * an Authorization header, so the stream is read with fetch; a dropped
    * connection resumes after the last event received.
    */
-  async subscribe(sessionId: string, afterSeq: number, listener: (event: DomainEvent) => void): Promise<Unsubscribe> {
+  async subscribe(
+    sessionId: string,
+    afterSeq: number,
+    listener: (event: DomainEvent) => void,
+    onLost?: (error: Error) => void,
+  ): Promise<Unsubscribe> {
     const abort = new AbortController();
     let lastSeq = afterSeq;
 
@@ -117,7 +122,10 @@ export class HttpCoderApi implements CoderApi {
           await readOnce();
         } catch (error) {
           if (abort.signal.aborted) return;
-          if (error instanceof ApiError && error.status < 500) return; // gone or forbidden: retrying will not help
+          if (error instanceof ApiError && error.status < 500) {
+            onLost?.(error); // gone or forbidden: retrying will not help, so say so instead of going quiet
+            return;
+          }
         }
         delay = lastSeq > before ? RECONNECT_MIN_MS : Math.min(delay * 2, RECONNECT_MAX_MS);
         await new Promise((resolve) => setTimeout(resolve, delay));

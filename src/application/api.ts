@@ -88,8 +88,17 @@ export interface CoderApi {
   fileContents(ref: PullRequestRef, path: string): Promise<FileContents>;
   startReview(ref: PullRequestRef, options: StartReviewOptions): Promise<{ sessionId: string }>;
   session(sessionId: string): Promise<SessionState>;
-  /** Replays the events after `afterSeq`, then keeps delivering new ones. */
-  subscribe(sessionId: string, afterSeq: number, listener: (event: DomainEvent) => void): Promise<Unsubscribe>;
+  /**
+   * Replays the events after `afterSeq`, then keeps delivering new ones.
+   * `onLost` is called once if the subscription ends for good after it had
+   * started (the session is gone, the access was revoked).
+   */
+  subscribe(
+    sessionId: string,
+    afterSeq: number,
+    listener: (event: DomainEvent) => void,
+    onLost?: (error: Error) => void,
+  ): Promise<Unsubscribe>;
   decide(sessionId: string, decision: DecisionInput): Promise<SessionState>;
   publicationPreview(sessionId: string): Promise<PublicationPlan>;
   publish(sessionId: string): Promise<SessionState>;

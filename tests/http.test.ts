@@ -5,11 +5,15 @@ import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CoderApi } from "../src/application/api.js";
 import type { AutoReview } from "../src/application/AutoReview.js";
+import { ApplicationError } from "../src/application/errors.js";
 import { silentLogger } from "../src/application/ports.js";
 import { createStandaloneApplication } from "../src/composition/standalone.js";
 import type { DomainEvent } from "../src/domain/deliberation/events.js";
 import { instantPace } from "../src/infrastructure/demo/ScriptedCouncil.js";
 import { buildHttpServer } from "../src/infrastructure/http/server.js";
+import { foldEvents } from "../src/domain/deliberation/state.js";
+import { ApiError, HttpCoderApi } from "../web/src/api/HttpCoderApi.js";
+import { followUntilConcluded } from "./support/follow.js";
 
 const noAutoReview = { consider: async () => null } as unknown as AutoReview;
 const servers: FastifyInstance[] = [];
@@ -117,5 +121,64 @@ describe("HTTP static web app", () => {
     const url = await serve(application, { webRoot: join(tmpdir(), "coder-web-does-not-exist") });
     expect((await fetch(`${url}/`)).status).toBe(404);
     expect((await fetch(`${url}/api/health`)).status).toBe(200);
+  });
+});
+
+const STOREFRONT = { provider: "demo", owner: "acme", repo: "storefront", number: 131 } as const;
+
+/** The two deliveries of the same application: in process, and over HTTP through the workspace's own client. */
+const deliveries: [string, () => Promise<{ api: CoderApi; missing: object }>][] = [
+  ["in process", async () => ({ api: createStandaloneApplication({ pace: instantPace }).application, missing: { code: "not_found" } })],
+  [
+    "over HTTP",
+    async () => {
+      const url = await serve(createStandaloneApplication({ pace: instantPace }).application);
+      return { api: new HttpCoderApi(url, () => null), missing: { status: 404, code: "not_found" } };
+    },
+  ],
+];
+
+describe.each(deliveries)("CoderApi %s", (_name, deliver) => {
+  it("lists, reviews, streams, decides and previews with the same answers", async () => {
+    const { api, missing } = await deliver();
+    const inbox = await api.inbox();
+    expect(inbox.items.map((item) => item.pullRequest.ref)).toContainEqual(STOREFRONT);
+    const detail = await api.pullRequest(STOREFRONT);
+    expect(detail.files.length).toBeGreaterThan(0);
+
+    const { sessionId } = await api.startReview(STOREFRONT, { language: "en" });
+    const events = await followUntilConcluded(api, sessionId);
+    expect(events.map((event) => event.seq)).toEqual(events.map((_, index) => index + 1));
+    expect(events.at(-1)!.type).toBe("ReviewSessionConcluded");
+    const state = await api.session(sessionId);
+    expect(foldEvents(events)).toEqual(state);
+
+    const finding = state.findings[0]!;
+    const decided = await api.decide(sessionId, { target: { kind: "finding", id: finding.id }, action: "dismiss" });
+    expect(decided.decisions[`finding:${finding.id}`]).toMatchObject({ action: "dismiss" });
+    const plan = await api.publicationPreview(sessionId);
+    expect(plan.body).not.toContain(finding.title);
+
+    await expect(api.session("missing")).rejects.toMatchObject(missing);
+  });
+});
+
+describe("HttpCoderApi event stream", () => {
+  it("tells the caller when the server refuses the stream for good, instead of going quiet", async () => {
+    const { application } = createStandaloneApplication({ pace: instantPace });
+    const { sessionId } = await application.startReview(STOREFRONT, { language: "en" });
+    let reads = 0;
+    const api: CoderApi = Object.assign(Object.create(application) as CoderApi, {
+      session: (id: string) => (++reads === 1 ? application.session(id) : Promise.reject(new ApplicationError("not_found", "Review session is gone"))),
+    });
+    const client = new HttpCoderApi(await serve(api), () => null);
+
+    const lost = vi.fn();
+    const unsubscribe = await client.subscribe(sessionId, 0, () => {}, lost);
+    await until(() => lost.mock.calls.length > 0);
+    expect(lost).toHaveBeenCalledTimes(1);
+    expect(lost.mock.calls[0]![0]).toBeInstanceOf(ApiError);
+    expect(lost.mock.calls[0]![0]).toMatchObject({ status: 404, code: "not_found" });
+    unsubscribe();
   });
 });
