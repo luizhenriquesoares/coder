@@ -8,7 +8,7 @@ export interface RecordedRequest {
   // The wire format of the Messages API: checked field by field in the tests.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly body: any;
-  /** Reviewer seat, read from the persona system block. */
+  /** Reviewer seat, read from the persona block of the user message. */
   readonly seat: string;
   /** Which structured answer the request asks for. */
   readonly round: "opening" | "debate" | "implementation" | "verdict";
@@ -46,7 +46,7 @@ export async function startFakeAnthropic(reply: (request: RecordedRequest) => Re
     req.on("data", (chunk) => (raw += chunk));
     req.on("end", () => {
       const body = JSON.parse(raw);
-      const persona: string = body.system?.[1]?.text ?? "";
+      const persona: string = body.messages?.[0]?.content?.[1]?.text ?? "";
       const properties = body.output_config?.format?.schema?.properties ?? {};
       const request: RecordedRequest = {
         url: req.url ?? "",

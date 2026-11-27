@@ -1,3 +1,4 @@
+import { createHmac, randomBytes } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import type { z } from "zod";
@@ -14,10 +15,11 @@ import type {
   VerdictBrief,
   VerdictContribution,
 } from "../../application/ports.js";
-import { refKey } from "../../domain/change/types.js";
+import { revisionKey, type PullRequestSnapshot } from "../../domain/change/types.js";
 import type { ReviewerId, Usage } from "../../domain/deliberation/model.js";
 import { usageOf } from "./pricing.js";
 import {
+  boundaryRule,
   COUNCIL_RULES,
   debateTask,
   implementationTask,
@@ -49,13 +51,20 @@ export class CouncilAgentError extends Error {
 const DEFAULT_MAX_OUTPUT_TOKENS = 32_000;
 /** Lets a declined request be retried server-side on the model Anthropic recommends. */
 const FALLBACK_BETA = "server-side-fallback-2026-07-01";
+/** Generated once per process: the author of a pull request cannot compute its boundary. */
+const BOUNDARY_KEY = randomBytes(32);
+
+/** The tag suffix that encloses one pull request head in the prompt. */
+export function boundaryFor(snapshot: PullRequestSnapshot): string {
+  return createHmac("sha256", BOUNDARY_KEY).update(revisionKey(snapshot.ref, snapshot.headSha)).digest("hex").slice(0, 24);
+}
 
 /**
  * The council's reviewer agents, backed by Claude.
  *
- * Every agent call shares one cached prefix (council rules + the pull
- * request) and gets its persona and task after it. Answers come back as
- * schema-validated structured output.
+ * Every agent call shares one cached prefix (the council's rules as system,
+ * then the pull request as the first user block) and gets its persona and
+ * task after it. Answers come back as schema-validated structured output.
  */
 export class ClaudeCouncil implements CouncilAgents {
   readonly engine = "claude" as const;
@@ -98,8 +107,8 @@ export class ClaudeCouncil implements CouncilAgents {
     task: string,
   ): Promise<{ output: z.infer<Schema>; usage: Usage }> {
     const { client, effort, logger } = this.options;
-    const sharedPrefix = `${COUNCIL_RULES}\n\n${renderPullRequest(context)}`;
-    const prefixKey = `${refKey(context.snapshot.ref)}@${context.snapshot.headSha}:${context.language}`;
+    const boundary = boundaryFor(context.snapshot);
+    const prefixKey = `${revisionKey(context.snapshot.ref, context.snapshot.headSha)}:${context.language}`;
     const warmed = await this.enterWarmGate(prefixKey);
 
     try {
@@ -110,11 +119,17 @@ export class ClaudeCouncil implements CouncilAgents {
         fallbacks: "default",
         thinking: { type: "adaptive" },
         output_config: { effort, format: betaZodOutputFormat(schema) },
-        system: [
-          { type: "text", text: sharedPrefix, cache_control: { type: "ephemeral" } },
-          { type: "text", text: personaBrief(reviewer, context.language) },
+        // Only the council's rules speak with the operator's voice; the author's text is material, in the user turn.
+        system: [{ type: "text", text: `${COUNCIL_RULES}\n\n${boundaryRule(boundary)}` }],
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: renderPullRequest(context, boundary), cache_control: { type: "ephemeral" } },
+              { type: "text", text: `${personaBrief(reviewer, context.language)}\n\n${task}` },
+            ],
+          },
         ],
-        messages: [{ role: "user", content: task }],
       });
       // The cache entry becomes readable once the first response starts streaming.
       stream.once("streamEvent", warmed);

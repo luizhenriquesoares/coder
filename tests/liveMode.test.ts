@@ -204,7 +204,7 @@ describe("live mode over HTTP", () => {
       expect(events.map((event) => event.type), type).toContain(type);
     }
     expect(anthropic.requests).toHaveLength(10);
-    expect(anthropic.requests[0]!.body.system[0].text).toContain("   1| const hits = new Map<string, number>();".trimStart());
+    expect(anthropic.requests[0]!.body.messages[0].content[0].text).toContain("   1| const hits = new Map<string, number>();".trimStart());
 
     const state = (await call<SessionState>(`/api/sessions/${sessionId}`)).body;
     expect(state).toMatchObject({ status: "concluded", engine: "claude", language: "pt", verdict: { decision: "request_changes", mergeRisk: "medium" } });
