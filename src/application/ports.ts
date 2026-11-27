@@ -173,8 +173,6 @@ export type Unsubscribe = () => void;
 export interface EventBus {
   publish(events: readonly DomainEvent[]): void;
   subscribe(sessionId: string, listener: (event: DomainEvent) => void): Unsubscribe;
-  /** Every event of every session (used by background projections). */
-  subscribeAll(listener: (event: DomainEvent) => void): Unsubscribe;
 }
 
 export interface Logger {

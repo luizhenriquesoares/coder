@@ -1,5 +1,5 @@
 import { ChangeSet } from "../domain/change/ChangeSet.js";
-import { refKey, type FileContents, type Provider, type PullRequestRef, type PullRequestSnapshot } from "../domain/change/types.js";
+import { refKey, revisionKey, type FileContents, type Provider, type PullRequestRef, type PullRequestSnapshot } from "../domain/change/types.js";
 import { ApplicationError, describeError } from "./errors.js";
 import { summarize, type DiffOnlyFile, type PullRequestSummary, type SourceControl } from "./ports.js";
 
@@ -127,7 +127,7 @@ export class PullRequestCatalog {
   }
 
   fileContents(snapshot: PullRequestSnapshot, path: string): Promise<FileContents> {
-    const key = `${refKey(snapshot.ref)}@${snapshot.headSha}:${path}`;
+    const key = `${revisionKey(snapshot.ref, snapshot.headSha)}:${path}`;
     const cached = this.files.get(key);
     if (cached) return cached;
 

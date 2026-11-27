@@ -25,13 +25,6 @@ export function revisionKey(ref: PullRequestRef, headSha: string): string {
   return `${refKey(ref)}@${headSha}`;
 }
 
-export function parseRefKey(key: string): PullRequestRef | null {
-  const match = /^(github|demo):([^/\s]+)\/([^#\s]+)#(\d+)$/.exec(key);
-  if (!match) return null;
-  const [, provider, owner, repo, number] = match;
-  return { provider: provider as Provider, owner: owner!, repo: repo!, number: Number(number) };
-}
-
 export type PullRequestState = "open" | "closed" | "merged";
 
 export type FileStatus = "added" | "modified" | "removed" | "renamed";

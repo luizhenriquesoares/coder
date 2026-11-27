@@ -3,7 +3,7 @@ import { ChangeSet } from "../src/domain/change/ChangeSet.js";
 import { parseUnifiedPatch } from "../src/domain/change/diffParser.js";
 import { isTestPath, languageFromPath } from "../src/domain/change/language.js";
 import { assessRisk } from "../src/domain/change/riskAssessment.js";
-import { parseRefKey, refKey, type PullRequestSnapshot, type RawFileChange } from "../src/domain/change/types.js";
+import { refKey, revisionKey, type PullRequestSnapshot, type RawFileChange } from "../src/domain/change/types.js";
 import { unifiedDiff } from "../src/infrastructure/demo/lineDiff.js";
 
 function snapshotOf(files: RawFileChange[]): PullRequestSnapshot {
@@ -149,9 +149,9 @@ describe("naming helpers", () => {
     expect(isTestPath("src/contest/a.ts")).toBe(false);
   });
 
-  it("round-trips pull request keys", () => {
+  it("names a pull request, and one commit of it", () => {
     const ref = { provider: "github", owner: "acme", repo: "shop.api", number: 12 } as const;
-    expect(parseRefKey(refKey(ref))).toEqual(ref);
-    expect(parseRefKey("nonsense")).toBeNull();
+    expect(refKey(ref)).toBe("github:acme/shop.api#12");
+    expect(revisionKey(ref, "abc123")).toBe("github:acme/shop.api#12@abc123");
   });
 });

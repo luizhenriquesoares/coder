@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import type { AppConfig, CoderApi, DecisionInput, Inbox, PullRequestDetail } from "../../../src/application/api.js";
 import type { FileContents, PullRequestRef } from "../../../src/domain/change/types.js";
-import { refKey } from "../../../src/domain/change/types.js";
+import { refKey, revisionKey } from "../../../src/domain/change/types.js";
 import type { DomainEvent } from "../../../src/domain/deliberation/events.js";
 import type { Engine, Language } from "../../../src/domain/deliberation/model.js";
 import type { PublicationPlan } from "../../../src/domain/deliberation/publicationPlanner.js";
@@ -256,7 +256,7 @@ export function useWorkspace(api: CoderApi, language: Language): [WorkspaceModel
 const fileCache = new Map<string, Promise<FileContents>>();
 
 export function loadFile(api: CoderApi, ref: PullRequestRef, headSha: string, path: string): Promise<FileContents> {
-  const key = `${refKey(ref)}@${headSha}:${path}`;
+  const key = `${revisionKey(ref, headSha)}:${path}`;
   let cached = fileCache.get(key);
   if (!cached) {
     cached = api.fileContents(ref, path);
