@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PublishedReview } from "../src/application/ports.js";
 import { createStandaloneApplication } from "../src/composition/standalone.js";
-import { decisionsOpen } from "../src/domain/deliberation/state.js";
+import { decisionsOpen, levelOf } from "../src/domain/deliberation/state.js";
 import { DemoSourceControl } from "../src/infrastructure/demo/DemoSourceControl.js";
 import { instantPace } from "../src/infrastructure/demo/ScriptedCouncil.js";
 
@@ -54,5 +54,21 @@ describe("publishing records its intent before it acts", () => {
     vi.restoreAllMocks();
     const published = await application.publish(sessionId);
     expect(published).toMatchObject({ publishing: false, publicationFailure: null, publication: { simulated: true } });
+  });
+
+  it("shows in the inbox how the review was published, not only what the council asked for", async () => {
+    const { application, conductReview } = createStandaloneApplication({ pace: instantPace });
+    const { sessionId } = await application.startReview({ ...storefront, number: 128 }, { language: "en" });
+    await conductReview.whenSettled(sessionId);
+    const latest = async () => (await application.inbox()).items.find((item) => item.latestSession?.sessionId === sessionId)!.latestSession!;
+    expect((await latest()).decision).toBe("request_changes");
+
+    const state = await application.session(sessionId);
+    const grounds = state.findings.filter((f) => levelOf(state, f) === "endorsed" && (f.severity === "blocker" || f.severity === "major"));
+    for (const finding of grounds) await application.decide(sessionId, { target: { kind: "finding", id: finding.id }, action: "dismiss" });
+    expect((await latest()).decision).toBe("request_changes"); // still the verdict: nothing was published yet
+
+    await application.publish(sessionId);
+    expect(await latest()).toMatchObject({ decision: "comment", published: true });
   });
 });

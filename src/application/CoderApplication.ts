@@ -247,7 +247,7 @@ export function summarizeSession(state: SessionState): SessionSummary {
     status: state.status,
     startedAt: state.startedAt,
     durationMs: state.durationMs,
-    decision: state.verdict?.decision ?? null,
+    decision: state.publication?.decision ?? state.verdict?.decision ?? null,
     mergeRisk: state.verdict?.mergeRisk ?? null,
     findings: state.findings.length,
     endorsedFindings: state.findings.filter((f) => levelOf(state, f) === "endorsed").length,

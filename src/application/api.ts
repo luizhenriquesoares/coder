@@ -42,6 +42,7 @@ export interface SessionSummary {
   readonly status: SessionStatus;
   readonly startedAt: string;
   readonly durationMs: number | null;
+  /** The council's verdict or, once the review is published, how it was published. */
   readonly decision: Decision | null;
   readonly mergeRisk: MergeRisk | null;
   readonly findings: number;
