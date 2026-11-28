@@ -192,6 +192,19 @@ Things that are deliberate:
   token goes as a plain bearer token. The council adapter receives the
   client, the words that name the credential and its fix, and the function
   that cleans a failure's text.
+- **A token kept in AWS.** The configuration may name, instead of a
+  credential, the parameter of AWS Systems Manager Parameter Store that holds
+  the auth token (`ClaudeCredentialSetting`). The composition root reads it
+  before it builds the client (`infrastructure/claude/storedToken.ts`, over
+  the adapter `infrastructure/aws/parameterStore.ts`), holds the value to
+  the rule of a pasted token, and from there on it is an auth token like any
+  other. The AWS SDK is loaded only then, and finds its own credentials. A
+  parameter that cannot be read stops the start, by the name of the
+  variable: what AWS refused (not found, not allowed, a KMS key, credentials
+  that ran out) in CodeR's words, with AWS's own sentence where AWS wrote it
+  about the request, never a parser's, which may quote the value. What only
+  needs another try (a throttled or failing service, a network out of
+  reach, fifteen seconds without an answer) is said to be that.
 - **A sign-in is the SDK's to keep.** The SDK reads, renews and rewrites the
   tokens of a Console sign-in. CodeR reads only its settings
   (`infrastructure/claude/signIn.ts`) and checks at start-up what would
@@ -347,7 +360,9 @@ Tests run without the network and without credentials. The SDK reads
 (`tests/support/hermetic.ts`) drops the machine's before every test file and
 points the API's address at one nothing listens on: a request reaches a
 stand-in only when CodeR handed its address over. The same file refuses any
-request to another machine.
+request to another machine. The AWS SDK gets the same treatment: no `AWS_*`
+variable of the machine, no `~/.aws`, no instance metadata service, and
+Systems Manager at an address nothing listens on.
 
 | Suite | What it pins down |
 |---|---|
@@ -358,6 +373,7 @@ request to another machine.
 | `demoCouncil.test.ts`, `demoTime.test.ts` | The whole protocol end to end on the fixtures, in both languages, and the fixtures' own consistency |
 | `claudeCouncil.test.ts` | The official SDK against a local server speaking the Messages API streaming wire format: request shape, cache order, the prompt boundary under hostile input, fallback, refusals, truncation, a stalled reviewer, a refused credential |
 | `claudeCredentials.test.ts` | Which credential the server presents, from the configuration to the request on the wire: the order of preference, an OAuth token against a gateway's, a key left in the environment, values that could not travel in a header, the line logged at start-up, what each refusal says, and that no key or token reaches the log, the session or the files, whichever variable or header it came from |
+| `claudeStoredToken.test.ts` | The auth token kept in AWS Systems Manager, read through the real AWS SDK from a local stand-in: the request (decrypted, signed for the region of the ARN, of `AWS_REGION`, of `AWS_DEFAULT_REGION` or of a profile), the token on the wire, what each refusal of AWS says, a damaged answer that holds the token, and that the value never reaches the log, the session or the files |
 | `claudeSignIn.test.ts` | The Console sign-in as the server's credential: its use and its renewal, where its reviews and its renewals go, every state that stops the start, and what a reviewer says of each way it can fail during a review, with no token and no path in it |
 | `github.test.ts` | Octokit against a local server speaking the REST API: pagination, merge base, contents, publishing and its fallbacks, the webhook receiver, error messages |
 | `http.test.ts`, `liveMode.test.ts`, `config.test.ts` | The real server through the real HTTP client: one contract suite over both deliveries of the API, the access guards including encoded spellings, the event stream's life cycle, a full live review and publication, stale commits, webhooks, restart, import |

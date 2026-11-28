@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { LANGUAGES } from "../domain/deliberation/model.js";
 import { EFFORTS } from "../infrastructure/claude/ClaudeCouncil.js";
-import { isOAuthToken, type ClaudeCredential } from "../infrastructure/claude/credential.js";
+import { isArn, regionOfArn } from "../infrastructure/aws/parameterStore.js";
+import { HEADER_SAFE, isOAuthToken, NOT_HEADER_SAFE, travelsSafely, type ClaudeCredentialSetting } from "../infrastructure/claude/credential.js";
 import type { RepositoryName } from "../infrastructure/github/GitHubSourceControl.js";
 import { isLoopback } from "../infrastructure/http/server.js";
 
@@ -11,17 +12,25 @@ const flag = z
   .transform((value) => ["1", "true", "yes", "on"].includes((value ?? "").toLowerCase()));
 
 /**
- * A key or a token, as it will travel in a header. A value with anything else
- * in it is refused here, by the name of its variable: further on, the error
- * for a header that cannot be sent quotes the whole value.
+ * The variables that can name the Claude credential, in CodeR's order of
+ * preference: a token before the sign-in, and both before a static key. A
+ * token kept in AWS Systems Manager comes first: CodeR is the only one to
+ * read that variable, so it is never set by accident.
  */
-const HEADER_SAFE = /^[\x21\x23-\x26\x28-\x5B\x5D-\x7E]+$/;
-const NOT_HEADER_SAFE = "the value has a space, a quote, a backslash, a line break or a character outside ASCII. Paste it alone, on one line";
-
-/** The variables that can hold the Claude credential, in CodeR's order of preference: a token before the sign-in, and both before a static key. */
-const CLAUDE_CREDENTIALS = ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE", "ANTHROPIC_API_KEY"] as const;
+const CLAUDE_CREDENTIALS = ["ANTHROPIC_AUTH_TOKEN_SSM_PARAMETER", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE", "ANTHROPIC_API_KEY"] as const;
 /** One of them, as pasted. Only the one that is used is held to its rule: a placeholder on a line CodeR sets aside stops nothing. */
 const pasted = z.string().trim().optional();
+
+/** Why a value cannot be the name or the ARN of a parameter of AWS Systems Manager. */
+function parameterNameProblem(name: string): string | null {
+  // The token itself, pasted on this line. Said without repeating it.
+  if (/^(sk-|gh[pousr]_|github_pat_|bearer\s)/i.test(name)) {
+    return "this looks like a token, not the name of a parameter. Here goes the name it is kept under in Parameter Store, such as /coder/anthropic-auth-token; a token itself goes in ANTHROPIC_AUTH_TOKEN";
+  }
+  if (isArn(name) && !regionOfArn(name)) return "this begins like an ARN but is not the ARN of a parameter (arn:aws:ssm:<region>:<account>:parameter/<name>)";
+  if (!/^[A-Za-z0-9_.\/:-]+$/.test(name)) return "the name of a parameter has only letters, digits, '_', '.', '-' and '/'";
+  return null;
+}
 
 /** Why a value cannot be the name `ant auth login` stored a sign-in under. That name becomes a file name, a command to copy and a line in the log. */
 function profileNameProblem(name: string): string | null {
@@ -43,6 +52,7 @@ const Environment = z.object({
   CODER_LANGUAGE: z.enum(LANGUAGES).default("en"),
   CODER_REVIEWER: z.string().default("human"),
 
+  ANTHROPIC_AUTH_TOKEN_SSM_PARAMETER: pasted,
   ANTHROPIC_AUTH_TOKEN: pasted,
   ANTHROPIC_PROFILE: pasted,
   ANTHROPIC_API_KEY: pasted,
@@ -52,6 +62,11 @@ const Environment = z.object({
   CODER_MODEL: z.string().default("claude-opus-5-5"),
   CODER_EFFORT: z.enum(EFFORTS).default("high"),
   CODER_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(4000).max(128000).default(32000),
+
+  /** Read only to find a token kept in AWS Systems Manager, and held to a rule only then. */
+  AWS_REGION: pasted,
+  AWS_DEFAULT_REGION: pasted,
+  AWS_ENDPOINT_URL_SSM: pasted,
 
   GITHUB_TOKEN: z.string().trim().regex(HEADER_SAFE, NOT_HEADER_SAFE).optional(),
   GITHUB_API_URL: z.string().url().optional(),
@@ -109,12 +124,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
   };
 }
 
-/** The credential a variable holds, or the reason the server cannot start on it. */
-function claudeCredentialIn(variable: (typeof CLAUDE_CREDENTIALS)[number], e: z.infer<typeof Environment>): ClaudeCredential {
+/** The credential a variable names, or the reason the server cannot start on it. */
+function claudeCredentialIn(variable: (typeof CLAUDE_CREDENTIALS)[number], e: z.infer<typeof Environment>): ClaudeCredentialSetting {
   const value = e[variable]!;
-  const problem = variable === "ANTHROPIC_PROFILE" ? profileNameProblem(value) : HEADER_SAFE.test(value) ? null : NOT_HEADER_SAFE;
+  const problem =
+    variable === "ANTHROPIC_PROFILE" ? profileNameProblem(value) : variable === "ANTHROPIC_AUTH_TOKEN_SSM_PARAMETER" ? parameterNameProblem(value) : HEADER_SAFE.test(value) ? null : NOT_HEADER_SAFE;
   if (problem) throw new Error(`Invalid configuration:\n  ${variable}: ${problem}`);
   switch (variable) {
+    case "ANTHROPIC_AUTH_TOKEN_SSM_PARAMETER":
+      return { kind: "stored-auth-token", variable, parameter: parameterIn(value, e) };
     case "ANTHROPIC_AUTH_TOKEN":
       return { kind: "auth-token", token: value, oauth: isOAuthToken(value, e.ANTHROPIC_BASE_URL) };
     case "ANTHROPIC_PROFILE":
@@ -122,6 +140,23 @@ function claudeCredentialIn(variable: (typeof CLAUDE_CREDENTIALS)[number], e: z.
     case "ANTHROPIC_API_KEY":
       return { kind: "api-key", key: value };
   }
+}
+
+/**
+ * Where the parameter is kept. The region of its ARN, where it lives, before
+ * AWS_REGION; then AWS_DEFAULT_REGION, which the AWS CLI reads and the AWS SDK
+ * does not; without any, the SDK takes the region of the AWS profile.
+ */
+function parameterIn(name: string, e: z.infer<typeof Environment>) {
+  const region = regionOfArn(name) ?? e.AWS_REGION ?? e.AWS_DEFAULT_REGION;
+  if (region !== undefined && !/^[a-z0-9]+(-[a-z0-9]+)+$/.test(region)) {
+    throw new Error(`Invalid configuration:\n  ${e.AWS_REGION === region ? "AWS_REGION" : "AWS_DEFAULT_REGION"}: "${region}" is not an AWS region, such as eu-west-1`);
+  }
+  const endpoint = e.AWS_ENDPOINT_URL_SSM;
+  if (endpoint !== undefined && !travelsSafely(endpoint)) {
+    throw new Error(`Invalid configuration:\n  AWS_ENDPOINT_URL_SSM: the token would travel in the clear, or this is not an address. Use an https address, or http to this machine only`);
+  }
+  return { name, region, endpoint };
 }
 
 /**

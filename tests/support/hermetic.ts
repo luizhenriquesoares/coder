@@ -9,10 +9,20 @@ import { join } from "node:path";
  * sign-ins is one that does not exist. A test that wants one of them sets it.
  */
 for (const name of Object.keys(process.env)) {
-  if (name.startsWith("ANTHROPIC_")) delete process.env[name];
+  if (name.startsWith("ANTHROPIC_") || name.startsWith("AWS_")) delete process.env[name];
 }
 process.env.ANTHROPIC_BASE_URL = "http://127.0.0.1:9";
 process.env.ANTHROPIC_CONFIG_DIR = join(tmpdir(), "coder-tests-no-sign-in-here");
+
+/**
+ * The same for the AWS SDK, which finds credentials, a region and addresses
+ * on its own: no AWS_* variable of the machine, no ~/.aws, no instance
+ * metadata service, and Systems Manager at an address nothing listens on.
+ */
+process.env.AWS_CONFIG_FILE = join(tmpdir(), "coder-tests-no-aws-here", "config");
+process.env.AWS_SHARED_CREDENTIALS_FILE = join(tmpdir(), "coder-tests-no-aws-here", "credentials");
+process.env.AWS_EC2_METADATA_DISABLED = "true";
+process.env.AWS_ENDPOINT_URL = "http://127.0.0.1:9";
 
 /**
  * And no test talks to another machine. One that drops the address above, to
