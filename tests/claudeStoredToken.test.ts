@@ -62,9 +62,20 @@ describe("naming the parameter", () => {
   it("comes before every other credential", () => {
     const all = { [VARIABLE]: PARAMETER, ANTHROPIC_AUTH_TOKEN: "sk-ant-oat01-token", ANTHROPIC_PROFILE: "work", ANTHROPIC_API_KEY: "sk-ant-api03-key", AWS_REGION: "eu-west-1" };
     expect(claudeOf(all)).toMatchObject({
-      credential: { kind: "stored-auth-token", variable: VARIABLE, parameter: { name: PARAMETER, region: "eu-west-1" } },
+      credential: { kind: "stored", holds: "auth-token", variable: VARIABLE, parameter: { name: PARAMETER, region: "eu-west-1" } },
       ignoredCredentials: ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE", "ANTHROPIC_API_KEY"],
     });
+  });
+
+  it("takes an API key kept there after the sign-in and before a key in the environment", () => {
+    const keyed = { ANTHROPIC_API_KEY_SSM_PARAMETER: "/coder/anthropic_api_key", ANTHROPIC_API_KEY: "sk-ant-api03-key", AWS_REGION: "us-east-1" };
+    expect(claudeOf(keyed)).toMatchObject({
+      credential: { kind: "stored", holds: "api-key", variable: "ANTHROPIC_API_KEY_SSM_PARAMETER", parameter: { name: "/coder/anthropic_api_key", region: "us-east-1" } },
+      ignoredCredentials: ["ANTHROPIC_API_KEY"],
+    });
+    expect(claudeOf({ ...keyed, ANTHROPIC_PROFILE: "work" })).toMatchObject({ credential: { kind: "sign-in" }, ignoredCredentials: ["ANTHROPIC_API_KEY_SSM_PARAMETER", "ANTHROPIC_API_KEY"] });
+    expect(configRefusal({ ANTHROPIC_API_KEY_SSM_PARAMETER: "sk-ant-api03-SECRETPART" })).toContain("ANTHROPIC_API_KEY_SSM_PARAMETER: this looks like a key or a token");
+    expect(configRefusal({ ANTHROPIC_API_KEY_SSM_PARAMETER: "arn:aws:ssm:euwest1:123456789012:parameter/x" })).toContain('ANTHROPIC_API_KEY_SSM_PARAMETER: "euwest1" is not an AWS region');
   });
 
   it("looks for it in the region of its ARN, then AWS_REGION, then AWS_DEFAULT_REGION", () => {
@@ -80,7 +91,7 @@ describe("naming the parameter", () => {
   it("refuses the token itself on that line, without repeating it", () => {
     for (const secret of ["sk-ant-oat01-SECRETPART", "ghp_SECRETPART0123456789", "Bearer SECRETPART"]) {
       const refusal = configRefusal({ [VARIABLE]: secret });
-      expect(refusal, secret).toContain(`${VARIABLE}: this looks like a token, not the name of a parameter.`);
+      expect(refusal, secret).toContain(`${VARIABLE}: this looks like a key or a token, not the name of a parameter.`);
       expect(refusal).not.toContain("SECRETPART");
     }
     expect(configRefusal({ [VARIABLE]: "/coder/my token" })).toContain(`${VARIABLE}: the name of a parameter has only letters`);
@@ -123,6 +134,22 @@ describe("the token read from Parameter Store", () => {
     expect(JSON.stringify(startupSummary(run.config, run.claude))).not.toContain(OAUTH_TOKEN);
     expect(lines.filter((line) => line.level === "warn")).toEqual([]);
     expect(await leftBehind(run, lines)).not.toContain(OAUTH_TOKEN);
+  });
+
+  it("sends a key read from there as the API key", async () => {
+    awsKeys();
+    const key = "sk-ant-api03-key-kept-in-ssm-0123456789abcdef";
+    const store = await parameterStore(() => ({ value: key }));
+    const api = await claudeApi();
+    const { logger, lines } = recordingLogger();
+    const run = await review(api, { ANTHROPIC_API_KEY_SSM_PARAMETER: "/coder/anthropic_api_key", AWS_REGION: "us-east-1", AWS_ENDPOINT_URL_SSM: store.endpoint }, logger);
+    expect(run.state.status).toBe("concluded");
+    expect(run.claude).toMatchObject({ credential: "API key", tokenFrom: "AWS Systems Manager parameter /coder/anthropic_api_key in us-east-1" });
+    for (const request of api.requests) {
+      expect(`${request.headers["x-api-key"]} ${request.headers.authorization}`).toContain(key);
+      expect(betas(request)).toEqual([CODER_BETA]);
+    }
+    expect(await leftBehind(run, lines)).not.toContain(key);
   });
 
   it("is a gateway's own when the reviews go to a gateway, and is trimmed", async () => {

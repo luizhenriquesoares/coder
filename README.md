@@ -117,6 +117,7 @@ these will do:
 | `ANTHROPIC_AUTH_TOKEN_SSM_PARAMETER` | The name or ARN of a parameter of AWS Systems Manager Parameter Store that holds the auth token below. CodeR reads it when it starts, with the AWS credentials of the machine. | A token your team already keeps in AWS. |
 | `ANTHROPIC_AUTH_TOKEN` | A bearer token. Either your LLM gateway's, with `ANTHROPIC_BASE_URL` pointing at the gateway, or a short-lived access token of your Console sign-in, which `ant auth print-credentials --env` prints ready for `.env`. | A gateway, or a first try. |
 | `ANTHROPIC_PROFILE=default` | Your Console sign-in on this machine, made once with [`ant auth login`](https://platform.claude.com/docs/en/cli-sdks-libraries/cli/authentication). No key is created and nothing is pasted anywhere. CodeR renews the token by itself until the sign-in runs out, some weeks later. | Your own machine. |
+| `ANTHROPIC_API_KEY_SSM_PARAMETER` | The name or ARN of a parameter of AWS Systems Manager that holds the API key below, read at start-up like the token above. | A server on AWS. |
 | `ANTHROPIC_API_KEY` | A static key from the [Console](https://platform.claude.com/settings/keys). | A server, with the key in its secret store. |
 
 That is also CodeR's order of preference: with more than one set it uses the
@@ -145,8 +146,10 @@ credential.
   `ANTHROPIC_PROFILE` line that looks like a key or a token, by how it begins
   or by its length, is refused the same way. Only the credential CodeR uses
   is held to this: a placeholder on a line it sets aside stops nothing.
-- **A token kept in AWS Systems Manager** is read once, at start-up, and
-  then treated like one pasted in `.env`. CodeR finds the AWS credentials as
+- **A token or a key kept in AWS Systems Manager** is read once, at start-up, and
+  then treated like one pasted in `.env`. A parameter that holds the token
+  of a Claude plan (Claude Code's, from `claude setup-token`) is no more
+  usable this way than the same token pasted in `.env`. CodeR finds the AWS credentials as
   the AWS CLI does: the `AWS_*` variables, a profile of `~/.aws` (with
   `AWS_PROFILE`), a single sign-on session, or the role of the instance,
   container or function it runs in. The region is the one in the parameter's
@@ -364,7 +367,8 @@ português: use o seletor EN/PT no topo.
 A credencial do Claude não precisa ser uma chave de API. Na ordem em que o
 CodeR prefere: `ANTHROPIC_AUTH_TOKEN_SSM_PARAMETER` (o nome do parâmetro do AWS
 Systems Manager onde o token está guardado: o CodeR lê na partida, com as
-credenciais AWS da máquina ou da role), `ANTHROPIC_AUTH_TOKEN` (um token de
+credenciais AWS da máquina ou da role; `ANTHROPIC_API_KEY_SSM_PARAMETER` faz
+o mesmo para uma chave de API), `ANTHROPIC_AUTH_TOKEN` (um token de
 acesso, ou o token do seu gateway), `ANTHROPIC_PROFILE=default` (o login da Claude Console feito uma
 vez com `ant auth login`, sem chave e renovado sozinho; os tokens desse login
 ficam na pasta do próprio `ant`, não no `.env`) ou `ANTHROPIC_API_KEY`. Cole

@@ -14,10 +14,12 @@ const flag = z
 /**
  * The variables that can name the Claude credential, in CodeR's order of
  * preference: a token before the sign-in, and both before a static key. A
- * token kept in AWS Systems Manager comes first: CodeR is the only one to
- * read that variable, so it is never set by accident.
+ * token or a key kept in AWS Systems Manager comes before the same kind in
+ * the environment: CodeR is the only one to read those variables, so they
+ * are never set by accident.
  */
-const CLAUDE_CREDENTIALS = ["ANTHROPIC_AUTH_TOKEN_SSM_PARAMETER", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE", "ANTHROPIC_API_KEY"] as const;
+const CLAUDE_CREDENTIALS = ["ANTHROPIC_AUTH_TOKEN_SSM_PARAMETER", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE", "ANTHROPIC_API_KEY_SSM_PARAMETER", "ANTHROPIC_API_KEY"] as const;
+type ParameterVariable = "ANTHROPIC_AUTH_TOKEN_SSM_PARAMETER" | "ANTHROPIC_API_KEY_SSM_PARAMETER";
 /** One of them, as pasted. Only the one that is used is held to its rule: a placeholder on a line CodeR sets aside stops nothing. */
 const pasted = z.string().trim().optional();
 
@@ -25,7 +27,7 @@ const pasted = z.string().trim().optional();
 function parameterNameProblem(name: string): string | null {
   // The token itself, pasted on this line. Said without repeating it.
   if (/^(sk-|gh[pousr]_|github_pat_|bearer\s)/i.test(name)) {
-    return "this looks like a token, not the name of a parameter. Here goes the name it is kept under in Parameter Store, such as /coder/anthropic-auth-token; a token itself goes in ANTHROPIC_AUTH_TOKEN";
+    return "this looks like a key or a token, not the name of a parameter. Here goes the name it is kept under in Parameter Store, such as /coder/anthropic-auth-token; a key or a token itself goes in ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN";
   }
   if (isArn(name) && !regionOfArn(name)) return "this begins like an ARN but is not the ARN of a parameter (arn:aws:ssm:<region>:<account>:parameter/<name>)";
   if (!/^[A-Za-z0-9_.\/:-]+$/.test(name)) return "the name of a parameter has only letters, digits, '_', '.', '-' and '/'";
@@ -53,6 +55,7 @@ const Environment = z.object({
   CODER_REVIEWER: z.string().default("human"),
 
   ANTHROPIC_AUTH_TOKEN_SSM_PARAMETER: pasted,
+  ANTHROPIC_API_KEY_SSM_PARAMETER: pasted,
   ANTHROPIC_AUTH_TOKEN: pasted,
   ANTHROPIC_PROFILE: pasted,
   ANTHROPIC_API_KEY: pasted,
@@ -128,11 +131,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
 function claudeCredentialIn(variable: (typeof CLAUDE_CREDENTIALS)[number], e: z.infer<typeof Environment>): ClaudeCredentialSetting {
   const value = e[variable]!;
   const problem =
-    variable === "ANTHROPIC_PROFILE" ? profileNameProblem(value) : variable === "ANTHROPIC_AUTH_TOKEN_SSM_PARAMETER" ? parameterNameProblem(value) : HEADER_SAFE.test(value) ? null : NOT_HEADER_SAFE;
+    variable === "ANTHROPIC_PROFILE" ? profileNameProblem(value) : variable.endsWith("_SSM_PARAMETER") ? parameterNameProblem(value) : HEADER_SAFE.test(value) ? null : NOT_HEADER_SAFE;
   if (problem) throw new Error(`Invalid configuration:\n  ${variable}: ${problem}`);
   switch (variable) {
     case "ANTHROPIC_AUTH_TOKEN_SSM_PARAMETER":
-      return { kind: "stored-auth-token", variable, parameter: parameterIn(value, e) };
+      return { kind: "stored", holds: "auth-token", variable, parameter: parameterIn(variable, value, e) };
+    case "ANTHROPIC_API_KEY_SSM_PARAMETER":
+      return { kind: "stored", holds: "api-key", variable, parameter: parameterIn(variable, value, e) };
     case "ANTHROPIC_AUTH_TOKEN":
       return { kind: "auth-token", token: value, oauth: isOAuthToken(value, e.ANTHROPIC_BASE_URL) };
     case "ANTHROPIC_PROFILE":
@@ -147,8 +152,8 @@ function claudeCredentialIn(variable: (typeof CLAUDE_CREDENTIALS)[number], e: z.
  * AWS_REGION; then AWS_DEFAULT_REGION, which the AWS CLI reads and the AWS SDK
  * does not; without any, the SDK takes the region of the AWS profile.
  */
-function parameterIn(name: string, e: z.infer<typeof Environment>) {
-  const [source, region] = regionOfArn(name) !== null ? ["ANTHROPIC_AUTH_TOKEN_SSM_PARAMETER", regionOfArn(name)!] : e.AWS_REGION ? ["AWS_REGION", e.AWS_REGION] : ["AWS_DEFAULT_REGION", e.AWS_DEFAULT_REGION];
+function parameterIn(variable: ParameterVariable, name: string, e: z.infer<typeof Environment>) {
+  const [source, region] = regionOfArn(name) !== null ? [variable, regionOfArn(name)!] : e.AWS_REGION ? ["AWS_REGION", e.AWS_REGION] : ["AWS_DEFAULT_REGION", e.AWS_DEFAULT_REGION];
   if (region !== undefined && !/^[a-z0-9]+(-[a-z0-9]+)+$/.test(region)) {
     throw new Error(`Invalid configuration:\n  ${source}: "${region}" is not an AWS region, such as eu-west-1`);
   }

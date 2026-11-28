@@ -40,7 +40,7 @@ export interface ClaudeWiring {
 export function startupSummary(config: ServerConfig, claude: ClaudeWiring | null): Record<string, unknown> {
   return {
     url: `http://${config.host}:${config.port}`,
-    claude: claude ?? "off (set ANTHROPIC_AUTH_TOKEN_SSM_PARAMETER, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_PROFILE or ANTHROPIC_API_KEY)",
+    claude: claude ?? "off (set ANTHROPIC_AUTH_TOKEN, ANTHROPIC_PROFILE or ANTHROPIC_API_KEY, or one of the _SSM_PARAMETER variables)",
     github: config.github.token ? "token configured" : "read-only, public repositories",
     repositories: config.github.repositories.map((r) => `${r.owner}/${r.repo}`),
     autoReview: config.autoReview.enabled,
@@ -111,7 +111,7 @@ export async function createServerApplication(config: ServerConfig, logger: Logg
 async function wireClaude(claude: ServerConfig["claude"], logger: Logger): Promise<{ council: ClaudeCouncil; wiring: ClaudeWiring } | null> {
   const { credential: setting, ignoredCredentials, credentialHeaders, baseUrl } = claude;
   if (!setting) return null;
-  const using = setting.kind === "stored-auth-token" ? `auth token, from ${setting.variable}` : describeCredential(setting);
+  const using = setting.kind === "stored" ? `${setting.holds === "api-key" ? "API key" : "auth token"}, from ${setting.variable}` : describeCredential(setting);
 
   // Said before the sign-in is checked: if that stops the start, the operator has
   // already read which credential was taken and which were left aside.
@@ -130,8 +130,8 @@ async function wireClaude(claude: ServerConfig["claude"], logger: Logger): Promi
 
   // A token kept in AWS is read now: a parameter that cannot be read stops the start, like a sign-in that could not work.
   const stored =
-    setting.kind === "stored-auth-token" ? await readStoredToken(setting.parameter, { variable: setting.variable, baseUrl, warn: (message) => logger.warn(message) }) : null;
-  const credential = setting.kind === "stored-auth-token" ? stored!.credential : setting;
+    setting.kind === "stored" ? await readStoredToken(setting.parameter, { holds: setting.holds, variable: setting.variable, baseUrl, warn: (message) => logger.warn(message) }) : null;
+  const credential = setting.kind === "stored" ? stored!.credential : setting;
   const signIn =
     credential.kind === "sign-in"
       ? await requireSignIn(credential.profile, { baseUrl, otherCredentials: ignoredCredentials, warn: (message) => logger.warn(message) })

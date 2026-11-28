@@ -194,11 +194,11 @@ Things that are deliberate:
   that cleans a failure's text.
 - **A token kept in AWS.** The configuration may name, instead of a
   credential, the parameter of AWS Systems Manager Parameter Store that holds
-  the auth token (`ClaudeCredentialSetting`). The composition root reads it
+  the auth token or the API key (`ClaudeCredentialSetting`). The composition root reads it
   before it builds the client (`infrastructure/claude/storedToken.ts`, over
   the adapter `infrastructure/aws/parameterStore.ts`), holds the value to
-  the rule of a pasted token, and from there on it is an auth token like any
-  other. The AWS SDK is loaded only then, and finds its own credentials. A
+  the rule of a pasted one, and from there on it is an auth token or a key
+  like any other. The AWS SDK is loaded only then, and finds its own credentials. A
   parameter that cannot be read stops the start, by the name of the
   variable: what AWS refused (not found, not allowed, a KMS key, credentials
   that ran out) in CodeR's words, with AWS's own sentence where AWS wrote it

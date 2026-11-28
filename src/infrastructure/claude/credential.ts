@@ -17,12 +17,12 @@ export type ClaudeCredential =
   | { readonly kind: "api-key"; readonly key: string };
 
 /**
- * What the configuration names: a credential, or where the auth token is kept
+ * What the configuration names: a credential, or where an auth token or a key is kept
  * for CodeR to read when it starts. `variable` is the line that named it.
  */
 export type ClaudeCredentialSetting =
   | ClaudeCredential
-  | { readonly kind: "stored-auth-token"; readonly variable: string; readonly parameter: ParameterReference };
+  | { readonly kind: "stored"; readonly holds: "auth-token" | "api-key"; readonly variable: string; readonly parameter: ParameterReference };
 
 /**
  * A key or a token, as it will travel in a header. A value with anything else
