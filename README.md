@@ -297,7 +297,7 @@ request before publishing again.
 | **The real Anthropic and GitHub APIs** | **Not exercised yet.** This build was made in an environment without credentials. Expect to adjust details the first time you run it with real keys. |
 
 ```bash
-npm test          # 238 tests
+npm test          # 241 tests
 npm run typecheck
 ```
 

@@ -360,9 +360,11 @@ Tests run without the network and without credentials. The SDK reads
 (`tests/support/hermetic.ts`) drops the machine's before every test file and
 points the API's address at one nothing listens on: a request reaches a
 stand-in only when CodeR handed its address over. The same file refuses any
-request to another machine. The AWS SDK gets the same treatment: no `AWS_*`
-variable of the machine, no `~/.aws`, no instance metadata service, and
-Systems Manager at an address nothing listens on.
+request made through `fetch` to another machine. The AWS SDK sends through
+`node:http`, which that guard does not see, so it is kept from the outside
+otherwise: no `AWS_*` variable of the machine, no `~/.aws`, no instance
+metadata service, and Systems Manager at an address nothing listens on
+unless a test hands over its stand-in's.
 
 | Suite | What it pins down |
 |---|---|

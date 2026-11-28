@@ -92,6 +92,8 @@ describe("naming the parameter", () => {
     expect(claudeOf({ ...odd, ANTHROPIC_API_KEY: "sk-ant-api03-key" }).credential).toMatchObject({ kind: "api-key" });
     expect(configRefusal({ ...odd, [VARIABLE]: PARAMETER })).toContain('AWS_REGION: "Europe (Ireland)" is not an AWS region');
     expect(configRefusal({ AWS_REGION: "eu-west-1", AWS_ENDPOINT_URL_SSM: "http://ssm.example.com", [VARIABLE]: PARAMETER })).toContain("AWS_ENDPOINT_URL_SSM: the token would travel in the clear");
+    // The region of an ARN is the parameter's line, not a variable that was never set.
+    expect(configRefusal({ [VARIABLE]: "arn:aws:ssm:euwest1:123456789012:parameter/x" })).toContain(`${VARIABLE}: "euwest1" is not an AWS region`);
     expect(configRefusal({ AWS_REGION: "eu-west-1", AWS_ENDPOINT_URL_SSM: "https://vpce-1.ssm.eu-west-1.vpce.amazonaws.com", [VARIABLE]: PARAMETER })).toBe("");
   });
 });
@@ -157,6 +159,24 @@ describe("the token read from Parameter Store", () => {
     expect(claude?.tokenFrom).toBe(`AWS Systems Manager parameter ${PARAMETER} in ap-southeast-2`);
   });
 
+  it("takes the profile's region when AWS_REGION is left blank, as compose files do", async () => {
+    awsKeys();
+    const directory = await temporaryDirectory("coder-aws-blank-");
+    await writeFile(join(directory, "config"), "[default]\nregion = eu-north-1\n");
+    vi.stubEnv("AWS_CONFIG_FILE", join(directory, "config"));
+    vi.stubEnv("AWS_REGION", "");
+    const store = await parameterStore(() => ({ value: OAUTH_TOKEN }));
+    await startServer({ [VARIABLE]: PARAMETER, AWS_REGION: "", AWS_ENDPOINT_URL_SSM: store.endpoint });
+    expect(store.reads[0]?.signedFor).toBe("eu-north-1");
+  });
+
+  it("is never fetched over plain http from another machine, wherever the SDK found the address", async () => {
+    awsKeys();
+    vi.stubEnv("AWS_ENDPOINT_URL", "http://ssm-proxy.example.com");
+    const refusal = await refusalOf({ endpoint: "" }, { AWS_ENDPOINT_URL_SSM: "" });
+    expect(refusal).toContain("could not be read: the token would travel in the clear, from http://ssm-proxy.example.com.");
+  });
+
   it("warns when the token is kept as plain text", async () => {
     awsKeys();
     const store = await parameterStore(() => ({ value: OAUTH_TOKEN, type: "String" }));
@@ -210,7 +230,16 @@ describe("a parameter that cannot be read", () => {
         { status: 400, error: "AccessDeniedException", message: "User: arn:aws:sts::123456789012:assumed-role/coder/task is not authorized to perform: kms:Decrypt on resource: arn:aws:kms:eu-west-1:123456789012:key/k1" },
         "it is encrypted with a KMS key that the AWS identity CodeR runs as may not use: allow kms:Decrypt on that key. AWS said: User: arn:aws:sts::123456789012:assumed-role/coder/task is not authorized to perform: kms:Decrypt on resource: arn:aws:kms:eu-west-1:123456789012:key/k1",
       ],
+      [
+        // "kms" in the name of a role or of the parameter is not a KMS refusal.
+        { status: 400, error: "AccessDeniedException", message: "User: arn:aws:sts::123456789012:assumed-role/kms-reader/task is not authorized to perform: ssm:GetParameter on resource: arn:aws:ssm:eu-west-1:123456789012:parameter/coder/kms-token" },
+        "the AWS identity CodeR runs as may not read it: allow ssm:GetParameter on the parameter. AWS said: User: arn:aws:sts::123456789012:assumed-role/kms-reader/task is not authorized to perform: ssm:GetParameter on resource: arn:aws:ssm:eu-west-1:123456789012:parameter/coder/kms-token",
+      ],
       [{ status: 400, error: "InvalidKeyId", message: "arn:aws:kms:eu-west-1:123456789012:key/k1 is disabled." }, "the KMS key it is encrypted with cannot be used: disabled, deleted or in another region. AWS said: arn:aws:kms:eu-west-1:123456789012:key/k1 is disabled."],
+      [
+        { status: 403, error: "AccessDenied", message: "User: arn:aws:iam::123456789012:user/reviewer is not authorized to perform: sts:AssumeRole on resource: arn:aws:iam::123456789012:role/coder" },
+        "the AWS profile could not take on the role it names (AccessDenied): check the role's trust policy and the profile. AWS said: User: arn:aws:iam::123456789012:user/reviewer is not authorized to perform: sts:AssumeRole on resource: arn:aws:iam::123456789012:role/coder",
+      ],
       [{ status: 400, error: "ExpiredTokenException", message: "The security token included in the request is expired" }, "AWS refused the credentials CodeR found (ExpiredTokenException). Sign in again (aws sso login), or check AWS_PROFILE and the keys."],
       [{ status: 400, error: "UnrecognizedClientException", message: "The security token included in the request is invalid." }, "AWS refused the credentials CodeR found (UnrecognizedClientException). Sign in again (aws sso login), or check AWS_PROFILE and the keys."],
       [{ status: 400, error: "ValidationException", message: "Parameter name: can't be prefixed with \"ssm\"" }, 'AWS did not take that as the name of a parameter. AWS said: Parameter name: can\'t be prefixed with "ssm"'],
@@ -255,6 +284,18 @@ describe("a parameter that cannot be read", () => {
       /^no AWS credentials were found \(.+\)\. Sign in with the AWS CLI \(aws configure, aws sso login\), set AWS_PROFILE, or run CodeR where a role gives it access\.$/,
     );
     expect(store.reads).toHaveLength(0);
+  });
+
+  it("does not repeat what a credential_process command was run with or printed", async () => {
+    const directory = await temporaryDirectory("coder-aws-process-");
+    const helper = join(directory, "helper.sh");
+    await writeFile(helper, "#!/bin/sh\necho SECRETPART-on-stderr >&2\nexit 3\n", { mode: 0o700 });
+    await writeFile(join(directory, "config"), `[default]\ncredential_process = ${helper} --passphrase SECRETPART\n`);
+    vi.stubEnv("AWS_CONFIG_FILE", join(directory, "config"));
+    const store = await parameterStore(() => ({ value: OAUTH_TOKEN }));
+    const refusal = await refusalOf(store);
+    expect(refusal).toContain("no AWS credentials were found (");
+    expect(refusal).not.toContain("SECRETPART");
   });
 
   it("does not repeat an answer that is not a parameter, which may hold the token", async () => {

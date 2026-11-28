@@ -148,9 +148,9 @@ function claudeCredentialIn(variable: (typeof CLAUDE_CREDENTIALS)[number], e: z.
  * does not; without any, the SDK takes the region of the AWS profile.
  */
 function parameterIn(name: string, e: z.infer<typeof Environment>) {
-  const region = regionOfArn(name) ?? e.AWS_REGION ?? e.AWS_DEFAULT_REGION;
+  const [source, region] = regionOfArn(name) !== null ? ["ANTHROPIC_AUTH_TOKEN_SSM_PARAMETER", regionOfArn(name)!] : e.AWS_REGION ? ["AWS_REGION", e.AWS_REGION] : ["AWS_DEFAULT_REGION", e.AWS_DEFAULT_REGION];
   if (region !== undefined && !/^[a-z0-9]+(-[a-z0-9]+)+$/.test(region)) {
-    throw new Error(`Invalid configuration:\n  ${e.AWS_REGION === region ? "AWS_REGION" : "AWS_DEFAULT_REGION"}: "${region}" is not an AWS region, such as eu-west-1`);
+    throw new Error(`Invalid configuration:\n  ${source}: "${region}" is not an AWS region, such as eu-west-1`);
   }
   const endpoint = e.AWS_ENDPOINT_URL_SSM;
   if (endpoint !== undefined && !travelsSafely(endpoint)) {

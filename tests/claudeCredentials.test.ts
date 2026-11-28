@@ -189,7 +189,7 @@ describe("what the server presents to the Claude API", () => {
 
     const bare = await startServer({});
     expect(startupSummary(bare.config, bare.claude)).toMatchObject({
-      claude: "off (set ANTHROPIC_AUTH_TOKEN, ANTHROPIC_PROFILE or ANTHROPIC_API_KEY)",
+      claude: "off (set ANTHROPIC_AUTH_TOKEN_SSM_PARAMETER, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_PROFILE or ANTHROPIC_API_KEY)",
       github: "read-only, public repositories",
     });
   });

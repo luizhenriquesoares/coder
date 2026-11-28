@@ -40,7 +40,7 @@ export interface ClaudeWiring {
 export function startupSummary(config: ServerConfig, claude: ClaudeWiring | null): Record<string, unknown> {
   return {
     url: `http://${config.host}:${config.port}`,
-    claude: claude ?? "off (set ANTHROPIC_AUTH_TOKEN, ANTHROPIC_PROFILE or ANTHROPIC_API_KEY)",
+    claude: claude ?? "off (set ANTHROPIC_AUTH_TOKEN_SSM_PARAMETER, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_PROFILE or ANTHROPIC_API_KEY)",
     github: config.github.token ? "token configured" : "read-only, public repositories",
     repositories: config.github.repositories.map((r) => `${r.owner}/${r.repo}`),
     autoReview: config.autoReview.enabled,

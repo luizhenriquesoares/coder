@@ -1,3 +1,5 @@
+import { travelsSafely } from "../claude/credential.js";
+
 /**
  * A secret kept in AWS Systems Manager Parameter Store, read once when CodeR
  * starts. The AWS SDK finds its own credentials as the AWS CLI does: the
@@ -50,10 +52,25 @@ export function isArn(name: string): boolean {
 
 export async function readParameter(reference: ParameterReference, deadlineMs = READ_DEADLINE_MS): Promise<StoredValue> {
   const { SSMClient, GetParameterCommand } = await import("@aws-sdk/client-ssm");
+  // A blank AWS_REGION, as compose files leave it, would hide the profile's region from the SDK: CodeR reads it as unset.
+  if (!reference.region && process.env.AWS_REGION?.trim() === "") delete process.env.AWS_REGION;
   const client = new SSMClient({
     ...(reference.region ? { region: reference.region } : {}),
     ...(reference.endpoint ? { endpoint: reference.endpoint } : {}),
   });
+  // The SDK finds an address in several places: AWS_ENDPOINT_URL, a profile's endpoint_url. Wherever it came
+  // from, the decrypted value does not come back over plain http from another machine.
+  client.middlewareStack.add(
+    (next) => async (args) => {
+      const request = args.request as { protocol?: string; hostname?: string; port?: number };
+      const address = `${request.protocol ?? ""}//${request.hostname ?? ""}${request.port ? `:${request.port}` : ""}`;
+      if (!travelsSafely(address)) {
+        throw new ParameterStoreError(`the token would travel in the clear, from ${address}. Use an https address for Systems Manager (AWS_ENDPOINT_URL_SSM, AWS_ENDPOINT_URL or the profile's endpoint_url).`, false);
+      }
+      return next(args);
+    },
+    { step: "finalizeRequest", name: "coderRefusesClearText" },
+  );
   const abort = new AbortController();
   let timer: NodeJS.Timeout | undefined;
   // The deadline covers what the abort signal does not: finding the credentials, which may ask other services.
@@ -91,6 +108,8 @@ const REFUSED_CREDENTIALS = new Set([
   "SignatureDoesNotMatch",
   "IncompleteSignature",
 ]);
+/** What STS answers when the profile cannot take on the role it names. */
+const ROLE_REFUSED = new Set(["AccessDenied", "RegionDisabledException"]);
 const UNREACHABLE = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "ECONNRESET", "ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH", "EPIPE"]);
 
 /**
@@ -109,15 +128,17 @@ function whyNotRead(error: unknown): ParameterStoreError {
     return new ParameterStoreError("there is no AWS region to look for it in. Set AWS_REGION, give the ARN of the parameter, or name a region in the AWS profile.", false);
   }
   if (name === "CredentialsProviderError") {
+    // Only the first line, and never what a credential_process command printed or was run with.
+    const reason = failure.message.split("\n")[0]!.replace(/Command failed:.*$/, "a credential_process command failed").trim().replace(/\.$/, "");
     return new ParameterStoreError(
-      `no AWS credentials were found (${failure.message.trim().replace(/\.$/, "")}). Sign in with the AWS CLI (aws configure, aws sso login), set AWS_PROFILE, or run CodeR where a role gives it access.`,
+      `no AWS credentials were found (${reason}). Sign in with the AWS CLI (aws configure, aws sso login), set AWS_PROFILE, or run CodeR where a role gives it access.`,
       false,
     );
   }
   if (name === "ParameterNotFound" || name === "ParameterVersionNotFound") {
     return new ParameterStoreError("there is no such parameter there. Check its name and its region: the AWS console shows its ARN.", false);
   }
-  if (name === "AccessDeniedException" && /kms|ciphertext/i.test(failure.message)) {
+  if (name === "AccessDeniedException" && /kms:Decrypt|ciphertext|KMS key/i.test(failure.message)) {
     return new ParameterStoreError(`it is encrypted with a KMS key that the AWS identity CodeR runs as may not use: allow kms:Decrypt on that key.${said}`, false);
   }
   if (name === "AccessDeniedException") {
@@ -125,6 +146,9 @@ function whyNotRead(error: unknown): ParameterStoreError {
   }
   if (name === "InvalidKeyId" || name.startsWith("KMS")) {
     return new ParameterStoreError(`the KMS key it is encrypted with cannot be used: disabled, deleted or in another region.${said}`, false);
+  }
+  if (ROLE_REFUSED.has(name) || /sts:AssumeRole/.test(failure.message)) {
+    return new ParameterStoreError(`the AWS profile could not take on the role it names (${name}): check the role's trust policy and the profile.${said}`, false);
   }
   if (REFUSED_CREDENTIALS.has(name)) {
     return new ParameterStoreError(`AWS refused the credentials CodeR found (${name}). Sign in again (aws sso login), or check AWS_PROFILE and the keys.`, false);
