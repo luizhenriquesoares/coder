@@ -161,19 +161,38 @@ Things that are deliberate:
   domain validates again, because a schema cannot know that a finding id
   exists.
 - **Adaptive thinking**, streaming, and a configurable effort.
-- **Failure is translated.** A refused credential, a missing model, a rate
-  limit, a refusal and a truncated answer each become a `CouncilAgentError`
-  with a message a person can act on.
+- **Failure is translated.** A credential that is refused or cannot be
+  renewed, a missing model, a rate limit, a refusal and a truncated answer
+  each become a `CouncilAgentError` with a message a person can act on. The
+  message is what gets logged and stored, so the adapter cleans it on the way
+  out: the configured key or token is removed by its value (one of eight
+  characters or more: a shorter one is a placeholder, and removing it would
+  garble ordinary words), and anything shaped like a key or token of
+  Anthropic's by its shape. The other side may repeat what it was sent, and
+  so may an error raised before a request left.
 - **One credential, chosen once.** The configuration turns the environment
   into a `ClaudeCredential`: an auth token, the Claude Console sign-in stored
-  on the machine, or an API key, preferred in that order. The composition
-  root builds the SDK client from it explicitly
-  (`infrastructure/claude/credential.ts`), so the SDK never picks another one
-  from the environment by rules of its own. An OAuth access token is handed
-  to the SDK as a token provider, because that is the form in which the SDK
-  announces OAuth to the API; a gateway's token goes as a plain bearer token.
-  A sign-in is renewed by the SDK. The adapter is told only how to name the
-  credential and what fixes it, never the secret.
+  on the machine, or an API key, preferred in that order. A key or a token
+  that could not travel in a header is refused there, by the name of its
+  variable and without its value. The composition root builds the SDK client
+  from the credential explicitly (`infrastructure/claude/credential.ts`), so
+  the SDK does not read `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` or
+  `ANTHROPIC_PROFILE` for another one. It still sends what
+  `ANTHROPIC_CUSTOM_HEADERS` holds, and the composition root warns when that
+  is a credential. An OAuth access token is handed to the SDK as a token
+  provider, because that is the form in which the SDK announces OAuth to the
+  API; a gateway's token goes as a plain bearer token. The council adapter
+  receives the client, the words that name the credential and its fix, and
+  the function that cleans a failure's text.
+- **A sign-in is the SDK's to keep.** The SDK reads, renews and rewrites the
+  tokens of a Console sign-in. CodeR reads only its settings
+  (`infrastructure/claude/signIn.ts`) and checks at start-up what would
+  otherwise fail hours later, at the first renewal: that the profile is a
+  sign-in, that its tokens are there, private and in a directory that can be
+  written to, and that neither the API's address nor the sign-in's own would
+  carry it in the clear. When the SDK cannot get a token out of it during a
+  review, only the status and the error code of the token endpoint's answer
+  are repeated.
 - **Untrusted input.** The pull request is written by its author, so it never
   travels in the instruction channel. It sits in the user turn inside a
   boundary derived for each commit by HMAC under a key made at start-up,
@@ -314,7 +333,11 @@ web/src/styles/      design tokens (dark and light) and the stylesheet
 
 ## 9. Testing
 
-Tests run without the network and without credentials.
+Tests run without the network and without credentials. The SDK reads
+`ANTHROPIC_*` variables on its own, so a setup file
+(`tests/support/hermetic.ts`) drops the machine's before every test file and
+points the API's address at one nothing listens on: a request reaches a
+stand-in only when CodeR handed its address over.
 
 | Suite | What it pins down |
 |---|---|
@@ -324,7 +347,8 @@ Tests run without the network and without credentials.
 | `conductReview.test.ts`, `autoReview.test.ts`, `inbox.test.ts`, `catalog.test.ts` | The limit on concurrent councils, deadlines, a reviewer or a recording that fails, automatic review on partial knowledge, how many requests the inbox costs GitHub, the content budget |
 | `demoCouncil.test.ts`, `demoTime.test.ts` | The whole protocol end to end on the fixtures, in both languages, and the fixtures' own consistency |
 | `claudeCouncil.test.ts` | The official SDK against a local server speaking the Messages API streaming wire format: request shape, cache order, the prompt boundary under hostile input, fallback, refusals, truncation, a stalled reviewer, a refused credential |
-| `claudeCredentials.test.ts` | Which credential the server presents, from the configuration to the request on the wire: the order of preference, an OAuth token against a gateway's, a key left in the environment, the Console sign-in and its renewal, a sign-in the machine does not have, what each refusal says |
+| `claudeCredentials.test.ts` | Which credential the server presents, from the configuration to the request on the wire: the order of preference, an OAuth token against a gateway's, a key left in the environment, values that could not travel in a header, what each refusal says, and that no key or token reaches the log, the session or the files |
+| `claudeSignIn.test.ts` | The Console sign-in as the server's credential: its use and its renewal, where a renewal goes, every state that stops the start, and what a reviewer says when it fails during a review |
 | `github.test.ts` | Octokit against a local server speaking the REST API: pagination, merge base, contents, publishing and its fallbacks, the webhook receiver, error messages |
 | `http.test.ts`, `liveMode.test.ts`, `config.test.ts` | The real server through the real HTTP client: one contract suite over both deliveries of the API, the access guards including encoded spellings, the event stream's life cycle, a full live review and publication, stale commits, webhooks, restart, import |
 | `workspaceSelectors.test.ts`, `workspaceReducer.test.ts`, `workspacePolling.test.ts` | The workspace without a browser: its view rules, its reducer (replay, another session's events, a lost stream, a pull request that moved), the refresh that pauses while the tab is hidden |

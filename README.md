@@ -119,24 +119,50 @@ these will do:
 | `ANTHROPIC_API_KEY` | A static key from the [Console](https://platform.claude.com/settings/keys). | A server, with the key in its secret store. |
 
 That is also CodeR's order of preference: with more than one set it uses the
-first, and says which in the line it logs at start-up.
+first and warns about the others at start-up. The line it logs when it starts
+listening names the kind of credential and the address of the API, never the
+credential.
 
 - **A Claude plan's login is not one of them.** What Claude Code signs in
   with, or a token from `claude setup-token`, is meant for Claude Code and
   Anthropic's own apps; a product that calls the API uses a Console
   credential ([Anthropic's rule](https://code.claude.com/docs/en/legal-and-compliance#authentication-and-credential-use)).
-  A Max, Ultra or Team plan does include
+  CodeR cannot tell one token from the other by looking at it: it sends what
+  you set, and the API is what refuses it. A Max, Ultra or Team plan does
+  include
   [monthly API credits](https://platform.claude.com/docs/en/about-claude/api-credits-for-subscribers)
   that you can claim for a Console organization, and CodeR runs on those like
   on any other credits.
 - **Set `ANTHROPIC_PROFILE` in `.env`, not with `export`.** Claude Code reads
   the same variable, and with it exported would move to that sign-in and to
-  its billing.
-- **When the API refuses the credential**, the reviewer's place in the
-  session says which credential it was, the API's own reason, and what to do:
-  a new token, `ant auth login` again, or another key. A sign-in that this
-  machine does not have stops CodeR at start-up, with the command that
-  creates it.
+  its billing. It works the other way round too: a token, a profile or an
+  address that your shell already exports for Claude Code is read by CodeR,
+  and a token or a profile there comes before the key in `.env`.
+- **Paste a key or a token alone, on one line.** CodeR does not start on a
+  value with a space, a quote or a line break in it, and says so by the name
+  of the variable, without printing the value.
+- **A sign-in that could not work stops CodeR at start-up**, with the command
+  or the change that fixes it: no sign-in under that name on this machine,
+  settings that cannot be read, tokens that are missing or that other users
+  of the machine can read, a tokens directory CodeR cannot write to (a
+  renewed token is saved there), or an address that would carry the sign-in
+  over plain http to another machine. A profile that holds a workload
+  identity federation is refused as well: CodeR does not take those yet.
+  Whether the tokens still work is for the API to say, at the first review.
+- **When a credential fails during a review**, the reviewer's place in the
+  session says which credential it was and what to do. For a credential the
+  API refuses, that is the API's own reason and the fix: a new token,
+  `ant auth login` again, or another key. For a sign-in that could not be
+  renewed, it is the status the token endpoint answered. What the API
+  denies, does not find or will not take (an organization without credits,
+  for one) is passed on in the API's words. A key or a token that the other
+  side repeats is taken out before the text is logged or stored.
+- **Where the requests go.** Reviews go to `ANTHROPIC_BASE_URL`, or to
+  Anthropic. A sign-in is renewed at the address in its own settings when
+  they name one, and where the reviews go otherwise. The SDK that sends them
+  also reads `ANTHROPIC_CUSTOM_HEADERS`: a credential written there goes out
+  as written, over or next to the one CodeR chose, and CodeR warns about it
+  at start-up.
 
 **Cost.** A session is ten model calls: four opening statements, four debate
 statements, the implementer and the moderator. The pull request is sent once
@@ -247,7 +273,7 @@ request before publishing again.
 | **The real Anthropic and GitHub APIs** | **Not exercised yet.** This build was made in an environment without credentials. Expect to adjust details the first time you run it with real keys. |
 
 ```bash
-npm test          # 187 tests
+npm test          # 211 tests
 npm run typecheck
 ```
 
@@ -307,17 +333,19 @@ npm start        # abra http://127.0.0.1:4317
 ```
 
 Para usar com PRs de verdade, copie `.env.example` para `.env` e preencha
-uma credencial do Claude, `GITHUB_TOKEN` e `GITHUB_REPOSITORIES`. As
-credenciais ficam só nesse arquivo, na sua máquina. A interface tem
+uma credencial do Claude, `GITHUB_TOKEN` e `GITHUB_REPOSITORIES`. O que você
+escreve nesse arquivo fica só nele, na sua máquina. A interface tem
 português: use o seletor EN/PT no topo.
 
 A credencial do Claude não precisa ser uma chave de API. Na ordem em que o
 CodeR prefere: `ANTHROPIC_AUTH_TOKEN` (um token de acesso, ou o token do seu
 gateway), `ANTHROPIC_PROFILE=default` (o login da Claude Console feito uma
-vez com `ant auth login`, sem chave e renovado sozinho) ou
-`ANTHROPIC_API_KEY`. O login de um plano Claude, o que o Claude Code usa,
-não serve: é reservado ao Claude Code e aos apps da Anthropic. Os detalhes
-estão em [The Claude credential](#the-claude-credential).
+vez com `ant auth login`, sem chave e renovado sozinho; os tokens desse login
+ficam na pasta do próprio `ant`, não no `.env`) ou `ANTHROPIC_API_KEY`. Cole
+a chave ou o token sozinho, em uma linha só: com espaço, aspas ou quebra de
+linha o CodeR não inicia. O login de um plano Claude, o que o Claude Code
+usa, não serve: é reservado ao Claude Code e aos apps da Anthropic. Os
+detalhes estão em [The Claude credential](#the-claude-credential).
 
 O próprio conselho revisou este código antes da primeira versão: 34 achados,
 todos endossados, corrigidos ou adiados com justificativa. O registro está em

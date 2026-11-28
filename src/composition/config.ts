@@ -10,6 +10,37 @@ const flag = z
   .optional()
   .transform((value) => ["1", "true", "yes", "on"].includes((value ?? "").toLowerCase()));
 
+/**
+ * A key or a token, as it will travel in a header. A value with anything else
+ * in it is refused here, by the name of its variable: further on, the error
+ * for a header that cannot be sent quotes the whole value.
+ */
+const secret = z
+  .string()
+  .trim()
+  .regex(/^[\x21\x23-\x26\x28-\x5B\x5D-\x7E]+$/, "the value has a space, a quote, a backslash, a line break or a character outside ASCII. Paste it alone, on one line")
+  .optional();
+
+/** The name `ant auth login` stored a sign-in under. It becomes a file name, a command to copy and a line in the log. */
+const profileName = z
+  .string()
+  .trim()
+  .superRefine((name, context) => {
+    const problem = profileNameProblem(name);
+    if (problem) context.addIssue({ code: "custom", message: problem });
+  })
+  .optional();
+
+function profileNameProblem(name: string): string | null {
+  // Said without repeating the value: what looks like a secret is not printed.
+  if (name.length > 64 || /^sk-/i.test(name)) {
+    return "this looks like a key or a token, not the name of a sign-in. A key goes in ANTHROPIC_API_KEY, a token in ANTHROPIC_AUTH_TOKEN";
+  }
+  if (name === "." || name === "..") return `"${name}" is not the name of a sign-in`;
+  if (!/^[A-Za-z0-9_.-]+$/.test(name)) return "a profile name has only letters, digits, '_', '-' and '.'";
+  return null;
+}
+
 const Environment = z.object({
   PORT: z.coerce.number().int().positive().default(4317),
   HOST: z.string().default("127.0.0.1"),
@@ -19,19 +50,17 @@ const Environment = z.object({
   CODER_LANGUAGE: z.enum(LANGUAGES).default("en"),
   CODER_REVIEWER: z.string().default("human"),
 
-  ANTHROPIC_AUTH_TOKEN: z.string().trim().optional(),
-  ANTHROPIC_PROFILE: z
-    .string()
-    .trim()
-    .regex(/^(?!\.{1,2}$)[A-Za-z0-9_.-]+$/, "a profile name has only letters, digits, '_', '-' and '.'")
-    .optional(),
-  ANTHROPIC_API_KEY: z.string().trim().optional(),
+  ANTHROPIC_AUTH_TOKEN: secret,
+  ANTHROPIC_PROFILE: profileName,
+  ANTHROPIC_API_KEY: secret,
   ANTHROPIC_BASE_URL: z.string().url().optional(),
+  /** Read by the SDK, not by CodeR, which only looks for a credential in it. */
+  ANTHROPIC_CUSTOM_HEADERS: z.string().optional(),
   CODER_MODEL: z.string().default("claude-opus-5-5"),
   CODER_EFFORT: z.enum(EFFORTS).default("high"),
   CODER_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(4000).max(128000).default(32000),
 
-  GITHUB_TOKEN: z.string().optional(),
+  GITHUB_TOKEN: secret,
   GITHUB_API_URL: z.string().url().optional(),
   GITHUB_REPOSITORIES: z.string().default(""),
   GITHUB_WEBHOOK_SECRET: z.string().optional(),
@@ -69,6 +98,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
       credential: chosen?.credential ?? null,
       /** Variables that hold another credential, set but not used. */
       ignoredCredentials: others.map((other) => other.variable),
+      /** Headers of ANTHROPIC_CUSTOM_HEADERS that carry a credential of their own. */
+      credentialHeaders: credentialHeaders(e.ANTHROPIC_CUSTOM_HEADERS),
       baseUrl: e.ANTHROPIC_BASE_URL,
       model: e.CODER_MODEL,
       effort: e.CODER_EFFORT,
@@ -98,6 +129,18 @@ function claudeCredentials(e: z.infer<typeof Environment>): { variable: string; 
   if (e.ANTHROPIC_PROFILE) configured.push({ variable: "ANTHROPIC_PROFILE", credential: { kind: "sign-in", profile: e.ANTHROPIC_PROFILE } });
   if (e.ANTHROPIC_API_KEY) configured.push({ variable: "ANTHROPIC_API_KEY", credential: { kind: "api-key", key: e.ANTHROPIC_API_KEY } });
   return configured;
+}
+
+/**
+ * The names of the headers in ANTHROPIC_CUSTOM_HEADERS that authenticate a
+ * request. The SDK sends every header of that variable as written, so these
+ * go out over, or next to, the credential CodeR chose.
+ */
+function credentialHeaders(customHeaders: string | undefined): string[] {
+  return (customHeaders ?? "").split("\n").flatMap((line) => {
+    const name = line.includes(":") ? line.slice(0, line.indexOf(":")).trim() : "";
+    return ["authorization", "x-api-key"].includes(name.toLowerCase()) ? [name] : [];
+  });
 }
 
 function blankAsUndefined(env: NodeJS.ProcessEnv): Record<string, string | undefined> {

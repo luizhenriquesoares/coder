@@ -12,7 +12,8 @@ import { SessionRepository } from "../application/SessionRepository.js";
 import type { Provider } from "../domain/change/types.js";
 import { InMemoryEventBus } from "../infrastructure/bus/InMemoryEventBus.js";
 import { ClaudeCouncil } from "../infrastructure/claude/ClaudeCouncil.js";
-import { adviceFor, anthropicClient, requireSignIn } from "../infrastructure/claude/credential.js";
+import { adviceFor, ANTHROPIC_API, anthropicClient, describeCredential, originOf, redactorFor } from "../infrastructure/claude/credential.js";
+import { requireSignIn } from "../infrastructure/claude/signIn.js";
 import { DemoSourceControl } from "../infrastructure/demo/DemoSourceControl.js";
 import { ScriptedCouncil } from "../infrastructure/demo/ScriptedCouncil.js";
 import { GitHubSourceControl } from "../infrastructure/github/GitHubSourceControl.js";
@@ -21,6 +22,16 @@ import { FileWatchlist } from "../infrastructure/persistence/FileWatchlist.js";
 import type { ServerConfig } from "./config.js";
 
 const quietOctokitLog = { debug() {}, info() {}, warn() {}, error() {} };
+
+/** What the Claude council runs on, in words fit for a log: the kind of credential, never the credential. */
+export interface ClaudeWiring {
+  readonly model: string;
+  readonly credential: string;
+  /** Scheme and host the reviews are sent to. */
+  readonly api: string;
+  /** Scheme and host a sign-in is renewed at, when that is somewhere else. */
+  readonly renewsAt?: string;
+}
 
 /** Composition root of the server: wires adapters to the application. */
 export async function createServerApplication(config: ServerConfig, logger: Logger) {
@@ -47,20 +58,8 @@ export async function createServerApplication(config: ServerConfig, logger: Logg
 
   // Order is preference: Claude reviews anything; the scripted council only knows the demo fixtures.
   const councils: CouncilAgents[] = [];
-  const { credential } = config.claude;
-  if (credential) {
-    if (credential.kind === "sign-in") await requireSignIn(credential.profile);
-    councils.push(
-      new ClaudeCouncil({
-        client: anthropicClient(credential, config.claude.baseUrl),
-        credentialAdvice: adviceFor(credential),
-        model: config.claude.model,
-        effort: config.claude.effort,
-        maxOutputTokens: config.claude.maxOutputTokens,
-        logger,
-      }),
-    );
-  }
+  const claude = await wireClaude(config.claude, logger);
+  if (claude) councils.push(claude.council);
   if (config.demo) councils.push(new ScriptedCouncil());
 
   const catalog = new PullRequestCatalog(sources);
@@ -70,7 +69,7 @@ export async function createServerApplication(config: ServerConfig, logger: Logg
   const appConfig: AppConfig = {
     mode: "server",
     engines: [
-      { engine: "claude", available: credential !== null, model: credential ? config.claude.model : null },
+      { engine: "claude", available: claude !== null, model: claude ? config.claude.model : null },
       { engine: "scripted", available: config.demo, model: null },
     ],
     github: {
@@ -91,5 +90,44 @@ export async function createServerApplication(config: ServerConfig, logger: Logg
     reviewerName: config.reviewerName,
   });
   await reconcileInterruptedSessions(sessions, logger);
-  return { application, autoReview, conductReview };
+  return { application, autoReview, conductReview, claude: claude?.wiring ?? null };
+}
+
+/** The Claude council on the one credential the configuration chose, or null when it holds none. */
+async function wireClaude(claude: ServerConfig["claude"], logger: Logger): Promise<{ council: ClaudeCouncil; wiring: ClaudeWiring } | null> {
+  const { credential, ignoredCredentials, credentialHeaders, baseUrl } = claude;
+  if (!credential) return null;
+  const using = describeCredential(credential);
+
+  // Said before the sign-in is checked: if that stops the start, the operator has
+  // already read which credential was taken and which were left aside.
+  if (ignoredCredentials.length > 0) {
+    logger.warn("More than one Claude credential is set. CodeR prefers an auth token to the Console sign-in, and both to an API key.", {
+      using,
+      ignored: ignoredCredentials,
+    });
+  }
+  if (credentialHeaders.length > 0) {
+    logger.warn("ANTHROPIC_CUSTOM_HEADERS carries a credential of its own. The SDK sends it as written, over or next to the one CodeR chose.", {
+      using,
+      headers: credentialHeaders,
+    });
+  }
+
+  const signIn =
+    credential.kind === "sign-in"
+      ? await requireSignIn(credential.profile, { baseUrl, otherCredentials: ignoredCredentials, warn: (message) => logger.warn(message) })
+      : null;
+  const council = new ClaudeCouncil({
+    client: anthropicClient(credential, baseUrl),
+    credentialAdvice: adviceFor(credential),
+    redact: redactorFor(credential),
+    model: claude.model,
+    effort: claude.effort,
+    maxOutputTokens: claude.maxOutputTokens,
+    logger,
+  });
+  const api = originOf(signIn?.api ?? baseUrl ?? ANTHROPIC_API);
+  const renewsAt = signIn ? originOf(signIn.renewsAt) : api;
+  return { council, wiring: { model: claude.model, credential: using, api, ...(renewsAt === api ? {} : { renewsAt }) } };
 }

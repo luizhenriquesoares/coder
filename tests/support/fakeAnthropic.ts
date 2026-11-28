@@ -22,7 +22,9 @@ export type Reply =
       readonly usage?: { input?: number; output?: number; cacheWrite?: number; cacheRead?: number };
       readonly delayMs?: number;
     }
-  | { readonly status: number; readonly errorType: string; readonly message: string };
+  | { readonly status: number; readonly errorType: string; readonly message: string }
+  /** An answer that is not shaped like the API's: what a gateway in front of it may send. */
+  | { readonly status: number; readonly rawBody: string; readonly contentType?: string };
 
 /** A request the fake token endpoint received: a sign-in renewing its access token. */
 export interface RecordedRenewal {
@@ -30,7 +32,9 @@ export interface RecordedRenewal {
   readonly body: { grant_type?: string; refresh_token?: string; client_id?: string };
 }
 
-export type Renewal = { readonly accessToken: string; readonly expiresIn: number; readonly refreshToken?: string } | { readonly status: number; readonly error: string };
+export type Renewal =
+  | { readonly accessToken: string; readonly expiresIn: number; readonly refreshToken?: string }
+  | { readonly status: number; readonly error: string; readonly description?: string };
 
 export interface FakeAnthropic {
   readonly baseURL: string;
@@ -71,7 +75,7 @@ export async function startFakeAnthropic(
         res.end(
           JSON.stringify(
             failed
-              ? { error: answer.error }
+              ? { error: answer.error, ...(answer.description ? { error_description: answer.description } : {}) }
               : { token_type: "Bearer", access_token: answer.accessToken, expires_in: answer.expiresIn, ...(answer.refreshToken ? { refresh_token: answer.refreshToken } : {}) },
           ),
         );
@@ -90,6 +94,11 @@ export async function startFakeAnthropic(
       startedBefore.push(responsesStarted);
       const answer = reply(request);
 
+      if ("rawBody" in answer) {
+        res.writeHead(answer.status, { "content-type": answer.contentType ?? "application/json", "request-id": "req_fake" });
+        res.end(answer.rawBody);
+        return;
+      }
       if ("status" in answer) {
         res.writeHead(answer.status, { "content-type": "application/json", "request-id": "req_fake" });
         res.end(JSON.stringify({ type: "error", error: { type: answer.errorType, message: answer.message } }));
