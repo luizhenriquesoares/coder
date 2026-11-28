@@ -114,8 +114,10 @@ these will do:
 
 | You set | What it is | Where it fits |
 |---|---|---|
+| `ANTHROPIC_AUTH_TOKEN_SSM_PARAMETER` | The name or ARN of a parameter of AWS Systems Manager Parameter Store that holds the auth token below. CodeR reads it when it starts, with the AWS credentials of the machine. | A token your team already keeps in AWS. |
 | `ANTHROPIC_AUTH_TOKEN` | A bearer token. Either your LLM gateway's, with `ANTHROPIC_BASE_URL` pointing at the gateway, or a short-lived access token of your Console sign-in, which `ant auth print-credentials --env` prints ready for `.env`. | A gateway, or a first try. |
 | `ANTHROPIC_PROFILE=default` | Your Console sign-in on this machine, made once with [`ant auth login`](https://platform.claude.com/docs/en/cli-sdks-libraries/cli/authentication). No key is created and nothing is pasted anywhere. CodeR renews the token by itself until the sign-in runs out, some weeks later. | Your own machine. |
+| `ANTHROPIC_API_KEY_SSM_PARAMETER` | The name or ARN of a parameter of AWS Systems Manager that holds the API key below, read at start-up like the token above. | A server on AWS. |
 | `ANTHROPIC_API_KEY` | A static key from the [Console](https://platform.claude.com/settings/keys). | A server, with the key in its secret store. |
 
 That is also CodeR's order of preference: with more than one set it uses the
@@ -144,6 +146,21 @@ credential.
   `ANTHROPIC_PROFILE` line that looks like a key or a token, by how it begins
   or by its length, is refused the same way. Only the credential CodeR uses
   is held to this: a placeholder on a line it sets aside stops nothing.
+- **A token or a key kept in AWS Systems Manager** is read once, at start-up, and
+  then treated like one pasted in `.env`. A parameter that holds the token
+  of a Claude plan (Claude Code's, from `claude setup-token`) is no more
+  usable this way than the same token pasted in `.env`. CodeR finds the AWS credentials as
+  the AWS CLI does: the `AWS_*` variables, a profile of `~/.aws` (with
+  `AWS_PROFILE`), a single sign-on session, or the role of the instance,
+  container or function it runs in. The region is the one in the parameter's
+  ARN, else `AWS_REGION`, else `AWS_DEFAULT_REGION`, else the profile's. That
+  identity needs `ssm:GetParameter` on the parameter, and `kms:Decrypt` on its
+  key when the key is one of your own rather than the default `aws/ssm`. A
+  parameter that cannot be read stops the start with what AWS refused and
+  what to change; a token kept as a plain `String` instead of a
+  `SecureString` is used, with a warning. A new value in the parameter is
+  read at the next start. `AWS_ENDPOINT_URL_SSM` points CodeR at a VPC
+  endpoint, over https.
 - **A sign-in that could not work stops CodeR at start-up**, with the command
   or the change that fixes it: no sign-in under that name on this machine,
   settings that cannot be read, tokens that are missing or that other users
@@ -283,7 +300,7 @@ request before publishing again.
 | **The real Anthropic and GitHub APIs** | **Not exercised yet.** This build was made in an environment without credentials. Expect to adjust details the first time you run it with real keys. |
 
 ```bash
-npm test          # 223 tests
+npm test          # 243 tests
 npm run typecheck
 ```
 
@@ -348,8 +365,11 @@ escreve nesse arquivo fica só nele, na sua máquina. A interface tem
 português: use o seletor EN/PT no topo.
 
 A credencial do Claude não precisa ser uma chave de API. Na ordem em que o
-CodeR prefere: `ANTHROPIC_AUTH_TOKEN` (um token de acesso, ou o token do seu
-gateway), `ANTHROPIC_PROFILE=default` (o login da Claude Console feito uma
+CodeR prefere: `ANTHROPIC_AUTH_TOKEN_SSM_PARAMETER` (o nome do parâmetro do AWS
+Systems Manager onde o token está guardado: o CodeR lê na partida, com as
+credenciais AWS da máquina ou da role; `ANTHROPIC_API_KEY_SSM_PARAMETER` faz
+o mesmo para uma chave de API), `ANTHROPIC_AUTH_TOKEN` (um token de
+acesso, ou o token do seu gateway), `ANTHROPIC_PROFILE=default` (o login da Claude Console feito uma
 vez com `ant auth login`, sem chave e renovado sozinho; os tokens desse login
 ficam na pasta do próprio `ant`, não no `.env`) ou `ANTHROPIC_API_KEY`. Cole
 a chave ou o token sozinho, em uma linha só: com espaço, aspas ou quebra de

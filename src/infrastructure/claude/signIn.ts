@@ -2,7 +2,8 @@ import { access, constants } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { getCredentialsPath, loadConfig as loadProfile } from "@anthropic-ai/sdk/core/credentials";
 import { checkCredentialsFileSafety, type WorkloadIdentityError } from "@anthropic-ai/sdk/lib/credentials/types";
-import { ANTHROPIC_API, loginCommand, originOf } from "./credential.js";
+// The SDK renews a sign-in over https, or over http to this machine only. API calls with its tokens are held to the same rule.
+import { ANTHROPIC_API, loginCommand, originOf, travelsSafely } from "./credential.js";
 
 /**
  * The Claude Console sign-in that `ant auth login` leaves on a machine: its
@@ -84,18 +85,6 @@ export async function requireSignIn(profile: string, check: SignInCheck): Promis
     }
   }
   return { api, renewsAt };
-}
-
-/** The SDK renews a sign-in over https, or over http to this machine only. API calls with its tokens are held to the same rule. */
-function travelsSafely(address: string): boolean {
-  let url: URL;
-  try {
-    url = new URL(address);
-  } catch {
-    return false;
-  }
-  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  return url.protocol === "https:" || (url.protocol === "http:" && ["localhost", "127.0.0.1", "::1"].includes(host));
 }
 
 async function allows(path: string, mode: number): Promise<boolean> {

@@ -14,6 +14,7 @@ import { InMemoryEventBus } from "../infrastructure/bus/InMemoryEventBus.js";
 import { ClaudeCouncil } from "../infrastructure/claude/ClaudeCouncil.js";
 import { adviceFor, ANTHROPIC_API, anthropicClient, describeCredential, originOf } from "../infrastructure/claude/credential.js";
 import { requireSignIn } from "../infrastructure/claude/signIn.js";
+import { readStoredToken } from "../infrastructure/claude/storedToken.js";
 import { DemoSourceControl } from "../infrastructure/demo/DemoSourceControl.js";
 import { ScriptedCouncil } from "../infrastructure/demo/ScriptedCouncil.js";
 import { GitHubSourceControl } from "../infrastructure/github/GitHubSourceControl.js";
@@ -27,6 +28,8 @@ const quietOctokitLog = { debug() {}, info() {}, warn() {}, error() {} };
 export interface ClaudeWiring {
   readonly model: string;
   readonly credential: string;
+  /** Where the credential was read, when it is not in the environment. */
+  readonly tokenFrom?: string;
   /** Scheme and host the reviews are sent to. */
   readonly api: string;
   /** Scheme and host a sign-in is renewed at, when that is somewhere else. */
@@ -37,7 +40,7 @@ export interface ClaudeWiring {
 export function startupSummary(config: ServerConfig, claude: ClaudeWiring | null): Record<string, unknown> {
   return {
     url: `http://${config.host}:${config.port}`,
-    claude: claude ?? "off (set ANTHROPIC_AUTH_TOKEN, ANTHROPIC_PROFILE or ANTHROPIC_API_KEY)",
+    claude: claude ?? "off (set ANTHROPIC_AUTH_TOKEN, ANTHROPIC_PROFILE or ANTHROPIC_API_KEY, or one of the _SSM_PARAMETER variables)",
     github: config.github.token ? "token configured" : "read-only, public repositories",
     repositories: config.github.repositories.map((r) => `${r.owner}/${r.repo}`),
     autoReview: config.autoReview.enabled,
@@ -106,9 +109,9 @@ export async function createServerApplication(config: ServerConfig, logger: Logg
 
 /** The Claude council on the one credential the configuration chose, or null when it holds none. */
 async function wireClaude(claude: ServerConfig["claude"], logger: Logger): Promise<{ council: ClaudeCouncil; wiring: ClaudeWiring } | null> {
-  const { credential, ignoredCredentials, credentialHeaders, baseUrl } = claude;
-  if (!credential) return null;
-  const using = describeCredential(credential);
+  const { credential: setting, ignoredCredentials, credentialHeaders, baseUrl } = claude;
+  if (!setting) return null;
+  const using = setting.kind === "stored" ? `${setting.holds === "api-key" ? "API key" : "auth token"}, from ${setting.variable}` : describeCredential(setting);
 
   // Said before the sign-in is checked: if that stops the start, the operator has
   // already read which credential was taken and which were left aside.
@@ -125,6 +128,10 @@ async function wireClaude(claude: ServerConfig["claude"], logger: Logger): Promi
     });
   }
 
+  // A token kept in AWS is read now: a parameter that cannot be read stops the start, like a sign-in that could not work.
+  const stored =
+    setting.kind === "stored" ? await readStoredToken(setting.parameter, { holds: setting.holds, variable: setting.variable, baseUrl, warn: (message) => logger.warn(message) }) : null;
+  const credential = setting.kind === "stored" ? stored!.credential : setting;
   const signIn =
     credential.kind === "sign-in"
       ? await requireSignIn(credential.profile, { baseUrl, otherCredentials: ignoredCredentials, warn: (message) => logger.warn(message) })
@@ -141,5 +148,14 @@ async function wireClaude(claude: ServerConfig["claude"], logger: Logger): Promi
   });
   const api = originOf(signIn?.api ?? baseUrl ?? ANTHROPIC_API);
   const renewsAt = signIn ? originOf(signIn.renewsAt) : api;
-  return { council, wiring: { model: claude.model, credential: using, api, ...(renewsAt === api ? {} : { renewsAt }) } };
+  return {
+    council,
+    wiring: {
+      model: claude.model,
+      credential: describeCredential(credential),
+      ...(stored ? { tokenFrom: stored.from } : {}),
+      api,
+      ...(renewsAt === api ? {} : { renewsAt }),
+    },
+  };
 }

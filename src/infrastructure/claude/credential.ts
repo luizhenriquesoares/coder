@@ -1,4 +1,5 @@
 import Anthropic, { type ClientOptions } from "@anthropic-ai/sdk";
+import type { ParameterReference } from "../aws/parameterStore.js";
 import { SentCredentials } from "./redaction.js";
 
 /**
@@ -14,6 +15,34 @@ export type ClaudeCredential =
   | { readonly kind: "sign-in"; readonly profile: string }
   /** A static API key. */
   | { readonly kind: "api-key"; readonly key: string };
+
+/**
+ * What the configuration names: a credential, or where an auth token or a key is kept
+ * for CodeR to read when it starts. `variable` is the line that named it.
+ */
+export type ClaudeCredentialSetting =
+  | ClaudeCredential
+  | { readonly kind: "stored"; readonly holds: "auth-token" | "api-key"; readonly variable: string; readonly parameter: ParameterReference };
+
+/**
+ * A key or a token, as it will travel in a header. A value with anything else
+ * in it is refused by the name of where it came from: further on, the error
+ * for a header that cannot be sent quotes the whole value.
+ */
+export const HEADER_SAFE = /^[\x21\x23-\x26\x28-\x5B\x5D-\x7E]+$/;
+export const NOT_HEADER_SAFE = "the value has a space, a quote, a backslash, a line break or a character outside ASCII. Paste it alone, on one line";
+
+/** Whether a credential sent to this address is safe from the network: https, or plain http to this machine only. */
+export function travelsSafely(address: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(address);
+  } catch {
+    return false;
+  }
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  return url.protocol === "https:" || (url.protocol === "http:" && ["localhost", "127.0.0.1", "::1"].includes(host));
+}
 
 /** The words for a credential that failed: what it was, and what the operator can do about it. */
 export interface CredentialAdvice {

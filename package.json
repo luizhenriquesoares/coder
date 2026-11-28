@@ -2,7 +2,7 @@
   "name": "coder",
   "version": "0.1.0",
   "private": true,
-  "description": "CodeR \u2014 an AI review council for every pull request, with an IDE-grade review workspace.",
+  "description": "CodeR — an AI review council for every pull request, with an IDE-grade review workspace.",
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.14.0",
+    "@aws-sdk/client-ssm": "^3.1179.0",
     "@fastify/static": "^11.0.0",
     "@octokit/rest": "^22.0.1",
     "dotenv": "^18.0.10",
