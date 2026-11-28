@@ -20,9 +20,10 @@ export const CODER_BETA = "server-side-fallback-2026-07-01";
 
 const cleanups: (() => Promise<unknown>)[] = [];
 
-/** For afterEach: closes and removes what the helpers below opened, and undoes every stubbed variable. */
+/** For afterEach: closes and removes what the helpers below opened, and undoes everything a test stubbed. */
 export async function tidyUp(): Promise<void> {
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 }
 
@@ -102,6 +103,11 @@ export async function storedIn(directory: string): Promise<string> {
   const entries = await readdir(directory, { recursive: true, withFileTypes: true });
   const files = entries.filter((entry) => entry.isFile()).map((entry) => join(entry.parentPath, entry.name));
   return (await Promise.all(files.map((file) => readFile(file, "utf8")))).join("\n");
+}
+
+/** Everything a review left where someone can read it: the log, the session as the API serves it, the files on disk. */
+export async function leftBehind(run: { readonly state: unknown; readonly dataDir: string }, lines: readonly Logged[]): Promise<string> {
+  return [JSON.stringify(lines), JSON.stringify(run.state), await storedIn(run.dataDir)].join("\n");
 }
 
 export interface StoredTokens {

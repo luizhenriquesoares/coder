@@ -2,7 +2,7 @@ import { access, constants } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { getCredentialsPath, loadConfig as loadProfile } from "@anthropic-ai/sdk/core/credentials";
 import { checkCredentialsFileSafety, type WorkloadIdentityError } from "@anthropic-ai/sdk/lib/credentials/types";
-import { ANTHROPIC_API, loginCommand, originOf, type CredentialAdvice } from "./credential.js";
+import { ANTHROPIC_API, loginCommand, originOf } from "./credential.js";
 
 /**
  * The Claude Console sign-in that `ant auth login` leaves on a machine: its
@@ -113,35 +113,50 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** The states of the stored tokens that a new login repairs, as the SDK words them. */
-const LOGIN_REPAIRS = /^Credentials file not found|^Credentials file at .* (is not valid JSON|must include)|^Access token at .* has expired/s;
+/**
+ * What the SDK says when a sign-in gives it no token to send, what CodeR says
+ * instead, and what to do when a new login is not what repairs it. The SDK
+ * names the file, by a path that holds the home directory, and what a failure
+ * says is kept with the review.
+ */
+const NO_TOKEN: readonly (readonly [said: RegExp, means: string, instead: string | null])[] = [
+  [/^Credentials file not found/, "its stored tokens are missing or cannot be read", null],
+  [/^Credentials file at .* is not valid JSON/s, "its stored tokens are damaged", null],
+  [/^Credentials file at .* must include/s, "its stored tokens hold no access token", null],
+  [/^Access token at .* has expired/s, "its token ran out and nothing can renew it", null],
+  [/^Credentials file at .* is group\/world-/s, "its stored tokens are open to other users of this machine", "Restart CodeR to read which file, and the command that closes it."],
+  [/^User OAuth refresh failed to reach/, "the address that renews it could not be reached", "Try again in a moment."],
+];
 /** The JavaScript error the SDK appends to some of its sentences. A parser's can quote the file it choked on. */
 const APPENDED_ERROR = /: \w*Error\b.*$/s;
 
 /**
- * Why the sign-in gave no token, in words that are safe to store. Of what the
+ * Why the sign-in gave no token, in words that are safe to keep. Of what the
  * token endpoint answered, only the status and the error code are repeated:
- * the rest of an answer may echo the token it was sent.
+ * the rest of an answer may echo the token it was sent. `login` is the
+ * command that makes the sign-in again.
  */
-export function describeSignInFailure(error: WorkloadIdentityError, advice: CredentialAdvice): string {
-  const again = advice.login ? `run \`${advice.login}\` again` : "sign in again";
+export function describeSignInFailure(error: WorkloadIdentityError, login?: string): string {
+  const again = login ? `run \`${login}\` again` : "sign in again";
   const status = error.statusCode;
   if (status === null) {
-    // Nothing came back: the stored tokens could not be read or renewed from here, or the endpoint was out of reach.
-    const repaired = LOGIN_REPAIRS.test(error.message) ? ` ${capitalized(again)}.` : "";
-    const reason = error.message.replace(APPENDED_ERROR, "").trim().replace(/\.$/, "");
-    return `The ${advice.name} could not be used: ${reason}.${repaired}`;
+    // Nothing came back: the stored tokens could not be used from here, or the endpoint was out of reach.
+    const known = NO_TOKEN.find(([said]) => said.test(error.message));
+    // A state this does not know keeps the SDK's sentence.
+    if (!known) return `The Console sign-in could not be used: ${error.message.replace(APPENDED_ERROR, "").trim().replace(/\.$/, "")}.`;
+    const [, means, instead] = known;
+    return `The Console sign-in could not be used: ${means}. ${instead ?? `${capitalized(again)}.`}`;
   }
   const code = errorCodeOf(error.body);
   const answer = `HTTP ${status}${code ? `, ${code}` : ""}`;
   if (status === 400 || status === 401) {
     // Usually a sign-in that ran out. Sometimes two renewals that crossed, and then the second try finds the token the first one saved.
-    return `The ${advice.name} could not be renewed (${answer}). Try once more; if it fails the same way, ${again}.`;
+    return `The Console sign-in could not be renewed (${answer}). Try once more; if it fails the same way, ${again}.`;
   }
   if (status === 408 || status === 429 || status >= 500) {
-    return `The ${advice.name} could not be renewed (${answer}). Try again in a moment.`;
+    return `The Console sign-in could not be renewed (${answer}). Try again in a moment.`;
   }
-  return `The ${advice.name} could not be renewed (${answer}).`;
+  return `The Console sign-in could not be renewed (${answer}).`;
 }
 
 /** The `error` of an OAuth error answer, or the `error.type` of one shaped like the API's, when it is a plain code. */

@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadConfig } from "../src/composition/config.js";
-import { createServerApplication } from "../src/composition/server.js";
-import { redactorFor, withoutSecrets } from "../src/infrastructure/claude/credential.js";
-import { betas, claudeApi, CODER_BETA, OAUTH_BETA, recordingLogger, review, reviewOn, startServer, storedIn, temporaryDirectory, tidyUp } from "./support/claudeServer.js";
+import { createServerApplication, startupSummary } from "../src/composition/server.js";
+import { SentCredentials, withoutSecrets } from "../src/infrastructure/claude/redaction.js";
+import { betas, claudeApi, CODER_BETA, leftBehind, OAUTH_BETA, recordingLogger, review, reviewOn, startServer, temporaryDirectory, tidyUp } from "./support/claudeServer.js";
 
 /**
  * Which credential the server presents to the Claude API, what it says when
@@ -95,12 +95,26 @@ describe("choosing the Claude credential", () => {
     for (const name of [".", ".."]) {
       expect(refusalOf({ ANTHROPIC_PROFILE: name }), name).toContain(`ANTHROPIC_PROFILE: "${name}" is not the name of a sign-in`);
     }
-    // The name of a sign-in ends up in the log and in the messages. A key pasted on its line must not.
-    for (const secret of ["sk-ant-api03-SECRETPART", "SECRETPART".repeat(7)]) {
+    // The name of a sign-in ends up in the log and in the messages. A key or a token pasted on its line must not:
+    // one of Anthropic's or of GitHub's by how it begins, and any other by its length.
+    for (const secret of ["sk-ant-api03-SECRETPART", "SK-ANT-API03-SECRETPART", "ghp_SECRETPART0123456789", "github_pat_SECRETPART", "SECRETPART-of-33-characters-xxxxx"]) {
       const refusal = refusalOf({ ANTHROPIC_PROFILE: secret });
       expect(refusal, secret).toContain("ANTHROPIC_PROFILE: this looks like a key or a token, not the name of a sign-in.");
       expect(refusal).not.toContain("SECRETPART");
     }
+    expect(claudeOf({ ANTHROPIC_PROFILE: "a-name-as-long-as-a-name-may-be." }).credential).toEqual({ kind: "sign-in", profile: "a-name-as-long-as-a-name-may-be." });
+  });
+
+  it("holds only the credential it uses to its rule", () => {
+    // Placeholders on the lines CodeR sets aside: some set-ups want the variables to exist.
+    const gateway = { ANTHROPIC_AUTH_TOKEN: "team-key-of-the-gateway", ANTHROPIC_BASE_URL: "https://llm-gateway.example.com" };
+    expect(claudeOf({ ...gateway, ANTHROPIC_PROFILE: "no profile", ANTHROPIC_API_KEY: "not needed" })).toMatchObject({
+      credential: { kind: "auth-token", token: "team-key-of-the-gateway" },
+      ignoredCredentials: ["ANTHROPIC_PROFILE", "ANTHROPIC_API_KEY"],
+    });
+    // Used, each of them stops the start.
+    expect(refusalOf({ ANTHROPIC_PROFILE: "no profile", ANTHROPIC_API_KEY: "not needed" })).toContain("ANTHROPIC_PROFILE: a profile name has only letters");
+    expect(refusalOf({ ANTHROPIC_API_KEY: "not needed" })).toContain("ANTHROPIC_API_KEY: the value has a space");
   });
 
   it("notices a credential among the headers of ANTHROPIC_CUSTOM_HEADERS", () => {
@@ -152,6 +166,32 @@ describe("what the server presents to the Claude API", () => {
       expect(request.headers["x-api-key"]).toBeUndefined();
       expect(betas(request).sort()).toEqual([OAUTH_BETA, CODER_BETA].sort());
     }
+  });
+
+  it("says what it runs on once it listens, and none of its secrets", async () => {
+    const secrets = {
+      ANTHROPIC_AUTH_TOKEN: OAUTH_TOKEN,
+      ANTHROPIC_API_KEY: KEY,
+      GITHUB_TOKEN: "ghp_made-up-for-the-test-0123456789",
+      GITHUB_WEBHOOK_SECRET: "webhook-secret-of-the-test",
+      CODER_API_TOKEN: "api-token-of-the-test",
+    };
+    const { config, claude } = await startServer({ ...secrets, ANTHROPIC_BASE_URL: "https://user:password-of-the-gateway@llm-gateway.example.com/claude", GITHUB_REPOSITORIES: "acme/storefront" });
+    const summary = startupSummary(config, claude);
+    expect(summary).toEqual({
+      url: "http://127.0.0.1:4317",
+      claude: { model: "claude-opus-5-5", credential: "auth token (OAuth)", api: "https://llm-gateway.example.com" },
+      github: "token configured",
+      repositories: ["acme/storefront"],
+      autoReview: false,
+    });
+    for (const secret of [...Object.values(secrets), "password-of-the-gateway"]) expect(JSON.stringify(summary)).not.toContain(secret);
+
+    const bare = await startServer({});
+    expect(startupSummary(bare.config, bare.claude)).toMatchObject({
+      claude: "off (set ANTHROPIC_AUTH_TOKEN, ANTHROPIC_PROFILE or ANTHROPIC_API_KEY)",
+      github: "read-only, public repositories",
+    });
   });
 
   it("says at start-up which credential it took when more than one is set", async () => {
@@ -210,6 +250,22 @@ describe("a credential the API refuses", () => {
     expect(broke.failure).toBe(`The Claude API rejected the request: ${noCredits}`);
   });
 
+  it("looks at ANTHROPIC_CUSTOM_HEADERS first when that variable sent a credential of its own", async () => {
+    const headers = "Authorization: Bearer token-of-the-headers";
+    vi.stubEnv("ANTHROPIC_CUSTOM_HEADERS", headers); // the SDK reads this variable from the process, on its own
+    const { logger, lines } = recordingLogger();
+    // A gateway that quotes the header it would not take.
+    const api = await claudeApi((request) => ({ status: 401, errorType: "authentication_error", message: `Invalid proxy token. Received: ${request.headers.authorization}` }));
+    const run = await review(api, { ANTHROPIC_API_KEY: KEY, ANTHROPIC_CUSTOM_HEADERS: headers }, logger);
+
+    // The key CodeR chose never left: it is not what was refused, and not what the gateway quoted.
+    expect(run.failure).toBe(
+      "The Claude API refused the credential (Invalid proxy token. Received: Bearer [credential removed]). " +
+        "ANTHROPIC_CUSTOM_HEADERS sends one of its own (Authorization) over or next to the API key: check that variable first.",
+    );
+    expect(await leftBehind(run, lines)).not.toContain("token-of-the-headers");
+  });
+
   it("makes do without a reason when the answer is not shaped like the API's", async () => {
     // A gateway of its own mind: `message` holds an object here, and the whole body is a web page there.
     const object = await claudeApi(() => ({ status: 401, rawBody: JSON.stringify({ error: { message: { detail: "no" } } }) }));
@@ -226,14 +282,16 @@ describe("the secret itself", () => {
     ["ANTHROPIC_AUTH_TOKEN", GATEWAY_TOKEN],
     ["ANTHROPIC_AUTH_TOKEN", OAUTH_TOKEN],
   ] as const;
+  const unsendable = (source: string, fix: string) =>
+    `A header of the request could not be sent: it holds a line break or a character that cannot travel in one. It comes from the ${source} or from ANTHROPIC_CUSTOM_HEADERS. ${fix}`;
 
   it("is in nothing a review leaves behind", async () => {
     for (const [variable, secret] of credentials) {
       const { logger, lines } = recordingLogger();
-      const { state, dataDir, claude } = await review(await claudeApi(), { [variable]: secret }, logger);
-      expect(state.status).toBe("concluded");
+      const run = await review(await claudeApi(), { [variable]: secret }, logger);
+      expect(run.state.status).toBe("concluded");
       expect(lines.length).toBeGreaterThan(0);
-      for (const text of [JSON.stringify(lines), JSON.stringify(claude), JSON.stringify(state), await storedIn(dataDir)]) expect(text, variable).not.toContain(secret);
+      expect(`${JSON.stringify(run.claude)}\n${await leftBehind(run, lines)}`, variable).not.toContain(secret);
     }
   });
 
@@ -242,36 +300,93 @@ describe("the secret itself", () => {
       const { logger, lines } = recordingLogger();
       // What a gateway may answer: the token it was handed, back in the message.
       const api = await claudeApi(() => ({ status: 401, errorType: "authentication_error", message: `no such token: ${secret}` }));
-      const { state, failure, dataDir } = await review(api, { [variable]: secret }, logger);
-      expect(failure, variable).toContain("(no such token: [credential removed])");
+      const run = await review(api, { [variable]: secret }, logger);
+      expect(run.failure, variable).toContain("(no such token: [credential removed])");
       expect(JSON.stringify(lines)).toContain("no such token"); // the log did record the refusal
-      for (const text of [JSON.stringify(lines), JSON.stringify(state), await storedIn(dataDir)]) expect(text, variable).not.toContain(secret);
+      expect(await leftBehind(run, lines), variable).not.toContain(secret);
     }
   });
 
-  it("is taken out of the error for a header that could not be sent", async () => {
-    // The configuration refuses such a value. This is the adapter on its own, should one ever reach it.
-    const wrapped = "sk-ant-api03-key-of-the-test\n0123456789abcdef";
+  it("is taken out when a header of ANTHROPIC_CUSTOM_HEADERS carried it, whatever the header is called", async () => {
+    vi.stubEnv("ANTHROPIC_CUSTOM_HEADERS", "X-Team: code-reviews\nX-Gateway-Token: token-of-the-headers");
+    const { logger, lines } = recordingLogger();
+    const api = await claudeApi((request) => ({
+      status: 403,
+      errorType: "permission_error",
+      message: `the token ${String(request.headers["x-gateway-token"])} of the team ${String(request.headers["x-team"])} has no budget left`,
+    }));
+    const run = await review(api, { ANTHROPIC_API_KEY: KEY }, logger);
+    // What names a team is no credential, and stays.
+    expect(run.failure).toBe("The Claude API denied the request: the token [credential removed] of the team code-reviews has no budget left.");
+    expect(await leftBehind(run, lines)).not.toContain("token-of-the-headers");
+  });
+
+  it("is not in what is said of a header that could not be sent", async () => {
+    // The runtime's own error for such a header quotes it whole. The configuration refuses a key like this one;
+    // this is the adapter on its own, should one ever reach it.
+    const wrapped = "sk-ant-api03-key-of-the-test\nSECRETPART";
     const { logger, lines } = recordingLogger();
     const api = await claudeApi();
     const dataDir = await temporaryDirectory("coder-credentials-");
     const config = loadConfig({ CODER_DATA_DIR: dataDir, ANTHROPIC_BASE_URL: api.baseURL, ANTHROPIC_API_KEY: KEY });
     const server = await createServerApplication({ ...config, claude: { ...config.claude, credential: { kind: "api-key", key: wrapped } } }, logger);
-    const { state, failure } = await reviewOn(server);
+    const run = { dataDir, ...(await reviewOn(server)) };
+    expect(run.failure).toBe(unsendable("API key", "Check ANTHROPIC_API_KEY."));
+    expect(await leftBehind(run, lines)).not.toContain("SECRETPART");
 
+    // The headers of ANTHROPIC_CUSTOM_HEADERS pass no check of CodeR's:
+    // a stray carriage return, a character no header can hold, a line that lost the colon after its name.
+    for (const headers of ["X-Gateway-Token: token\rSECRETPART", "X-Gateway-Token: token\u2014SECRETPART", "Authorization Bearer SECRETPART:x"]) {
+      vi.stubEnv("ANTHROPIC_CUSTOM_HEADERS", headers);
+      const recorded = recordingLogger();
+      const refused = await review(api, { ANTHROPIC_API_KEY: KEY }, recorded.logger);
+      expect(refused.failure, JSON.stringify(headers)).toBe(unsendable("API key", "Check ANTHROPIC_API_KEY."));
+      expect(await leftBehind(refused, recorded.lines)).not.toContain("SECRETPART");
+    }
     expect(api.requests).toHaveLength(0);
-    expect(failure).toBe('Headers.append: "Bearer [credential removed]" is an invalid header value.');
-    for (const text of [JSON.stringify(lines), JSON.stringify(state), await storedIn(dataDir)]) expect(text).not.toContain("0123456789abcdef");
   });
 
-  it("is recognized by its value, and by its shape when it is one of Anthropic's", () => {
-    const gateway = redactorFor({ kind: "auth-token", token: GATEWAY_TOKEN, oauth: false });
-    expect(gateway(`unknown team key ${GATEWAY_TOKEN}, twice: ${GATEWAY_TOKEN}`)).toBe("unknown team key [credential removed], twice: [credential removed]");
-    // A sign-in's tokens never pass through CodeR's hands: only their shape gives them away.
-    const signIn = redactorFor({ kind: "sign-in", profile: "work" });
-    expect(signIn("refresh token sk-ant-ort01-refresh-of-the-test-0123456789 has expired")).toBe("refresh token [credential removed] has expired");
-    // A prefix is not a secret, and neither is a value too short to be one.
+  it("is recognized by its shape when it is one of Anthropic's, wherever it came from", () => {
+    expect(withoutSecrets(`access ${OAUTH_TOKEN}, refresh sk-ant-ort01-refresh-of-the-test-0123456789`)).toBe("access [credential removed], refresh [credential removed]");
+    // A prefix is not a secret.
     expect(withoutSecrets("An OAuth access token starts with sk-ant-oat01-.")).toBe("An OAuth access token starts with sk-ant-oat01-.");
-    expect(redactorFor({ kind: "auth-token", token: "test", oauth: false })("the test token was refused")).toBe("the test token was refused");
+  });
+
+  it("is remembered once a request carried it, whatever its shape and whichever header or body it left in", async () => {
+    vi.stubGlobal("fetch", async () => new Response("{}"));
+    const sent = new SentCredentials("key-the-client-was-built-with");
+    await sent.fetch("https://llm-gateway.example.com/v1/messages", {
+      method: "POST",
+      headers: { Authorization: "Bearer opaque-access-token", "X-Api-Key": "key-of-the-gateway", "Ocp-Apim-Subscription-Key": "key-of-the-subscription", "X-Team": "code-reviews", "X-Monkey": "capuchin-monkey" },
+    });
+    await sent.fetch("https://console.example.com/v1/oauth/token", { method: "POST", body: JSON.stringify({ grant_type: "refresh_token", refresh_token: "opaque-refresh-token" }) });
+
+    expect(sent.redact("key-the-client-was-built-with was not sent, Bearer opaque-access-token was")).toBe("[credential removed] was not sent, Bearer [credential removed] was");
+    expect(sent.redact("key-of-the-gateway, key-of-the-subscription, opaque-refresh-token")).toBe("[credential removed], [credential removed], [credential removed]");
+    // Not everything in a header is a credential, and neither is a body sent anywhere else.
+    expect(sent.redact("the team code-reviews, a capuchin-monkey, a POST")).toBe("the team code-reviews, a capuchin-monkey, a POST");
+    await sent.fetch("https://llm-gateway.example.com/v1/messages", { method: "POST", body: JSON.stringify({ refresh_token: "a-field-of-a-message" }) });
+    expect(sent.redact("a-field-of-a-message")).toBe("a-field-of-a-message");
+  });
+
+  it("is not looked for when it is too short to be one, and is taken out whole when another begins like it", async () => {
+    vi.stubGlobal("fetch", async () => new Response("{}"));
+    expect(new SentCredentials("test").redact("the test token was refused")).toBe("the test token was refused");
+
+    const sent = new SentCredentials();
+    for (const token of ["opaque-token", "opaque-token-renewed"]) await sent.fetch("https://api.example.com/v1/messages", { headers: { Authorization: `Bearer ${token}` } });
+    expect(sent.redact("opaque-token-renewed after opaque-token")).toBe("[credential removed] after [credential removed]");
+  });
+
+  it("is still known after many others when it is still being sent, while the oldest of the others are let go", async () => {
+    vi.stubGlobal("fetch", async () => new Response("{}"));
+    const sent = new SentCredentials();
+    // A gateway's key that stays, next to an access token that is renewed forty times.
+    for (let renewal = 1; renewal <= 40; renewal += 1) {
+      await sent.fetch("https://api.example.com/v1/messages", { headers: { "Api-Key": "key-of-the-gateway", Authorization: `Bearer access-token-number-${renewal}!` } });
+      expect(sent.redact("key-of-the-gateway"), `after ${renewal} access tokens`).toBe("[credential removed]");
+    }
+    expect(sent.redact("access-token-number-40!")).toBe("[credential removed]");
+    expect(sent.redact("access-token-number-1!")).toBe("access-token-number-1!");
   });
 });

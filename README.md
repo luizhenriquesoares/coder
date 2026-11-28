@@ -140,7 +140,10 @@ credential.
   and a token or a profile there comes before the key in `.env`.
 - **Paste a key or a token alone, on one line.** CodeR does not start on a
   value with a space, a quote or a line break in it, and says so by the name
-  of the variable, without printing the value.
+  of the variable, without printing the value. A value on the
+  `ANTHROPIC_PROFILE` line that looks like a key or a token, by how it begins
+  or by its length, is refused the same way. Only the credential CodeR uses
+  is held to this: a placeholder on a line it sets aside stops nothing.
 - **A sign-in that could not work stops CodeR at start-up**, with the command
   or the change that fixes it: no sign-in under that name on this machine,
   settings that cannot be read, tokens that are missing or that other users
@@ -153,16 +156,23 @@ credential.
   session says which credential it was and what to do. For a credential the
   API refuses, that is the API's own reason and the fix: a new token,
   `ant auth login` again, or another key. For a sign-in that could not be
-  renewed, it is the status the token endpoint answered. What the API
-  denies, does not find or will not take (an organization without credits,
-  for one) is passed on in the API's words. A key or a token that the other
-  side repeats is taken out before the text is logged or stored.
-- **Where the requests go.** Reviews go to `ANTHROPIC_BASE_URL`, or to
-  Anthropic. A sign-in is renewed at the address in its own settings when
-  they name one, and where the reviews go otherwise. The SDK that sends them
-  also reads `ANTHROPIC_CUSTOM_HEADERS`: a credential written there goes out
-  as written, over or next to the one CodeR chose, and CodeR warns about it
-  at start-up.
+  renewed, it is the status the token endpoint answered. For a sign-in whose
+  stored tokens can no longer be used, it is what became of them, without
+  the path of the file. What the API denies, does not find or will not take
+  (an organization without credits, for one) is passed on in the API's words.
+- **A key or a token that the other side repeats is taken out** before the
+  text is logged or stored. CodeR learns them as they leave: what a request
+  carries in a header that authenticates, whichever variable or file it came
+  from, and the refresh token of a renewal. Anything shaped like a key or a
+  token of Anthropic's is taken out as well.
+- **Where the requests go.** Reviews go to `ANTHROPIC_BASE_URL`. Without it,
+  a sign-in sends them to the address in its own settings when they name
+  one, and everything else goes to Anthropic. A sign-in is renewed at the
+  address in its settings when they name one, and where the reviews go
+  otherwise. The SDK that sends them also reads `ANTHROPIC_CUSTOM_HEADERS`:
+  a credential written there goes out as written, over or next to the one
+  CodeR chose. CodeR warns about it at start-up, and a refusal of the API
+  then says to look at that variable first.
 
 **Cost.** A session is ten model calls: four opening statements, four debate
 statements, the implementer and the moderator. The pull request is sent once
@@ -273,7 +283,7 @@ request before publishing again.
 | **The real Anthropic and GitHub APIs** | **Not exercised yet.** This build was made in an environment without credentials. Expect to adjust details the first time you run it with real keys. |
 
 ```bash
-npm test          # 211 tests
+npm test          # 223 tests
 npm run typecheck
 ```
 

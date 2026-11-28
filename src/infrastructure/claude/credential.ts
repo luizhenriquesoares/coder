@@ -1,4 +1,5 @@
 import Anthropic, { type ClientOptions } from "@anthropic-ai/sdk";
+import { SentCredentials } from "./redaction.js";
 
 /**
  * What CodeR presents to the Claude API. Each of the three belongs to a Claude
@@ -48,13 +49,22 @@ export function isOAuthToken(token: string, baseUrl: string | undefined): boolea
   return baseUrl === undefined || new URL(baseUrl).origin === ANTHROPIC_API;
 }
 
+/** A client for the Claude API, and what cleans a text of the credentials that client has presented. */
+export interface ClaudeClient {
+  readonly client: Anthropic;
+  readonly redact: (text: string) => string;
+}
+
 /**
  * A client that authenticates with this credential: the SDK does not read
  * ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN or ANTHROPIC_PROFILE for another
  * one. What ANTHROPIC_CUSTOM_HEADERS holds still goes out as written.
  */
-export function anthropicClient(credential: ClaudeCredential, baseUrl?: string): Anthropic {
-  return new Anthropic({ ...credentialOptions(credential), ...(baseUrl ? { baseURL: baseUrl } : {}) });
+export function anthropicClient(credential: ClaudeCredential, baseUrl?: string): ClaudeClient {
+  const configured = credential.kind === "auth-token" ? credential.token : credential.kind === "api-key" ? credential.key : undefined;
+  const sent = new SentCredentials(configured);
+  const client = new Anthropic({ ...credentialOptions(credential), ...(baseUrl ? { baseURL: baseUrl } : {}), fetch: sent.fetch });
+  return { client, redact: sent.redact };
 }
 
 function credentialOptions(credential: ClaudeCredential): Pick<ClientOptions, "apiKey" | "authToken" | "credentials" | "profile"> {
@@ -84,7 +94,22 @@ export function describeCredential(credential: ClaudeCredential): string {
   }
 }
 
-export function adviceFor(credential: ClaudeCredential): CredentialAdvice {
+/**
+ * `competingHeaders` are the headers of ANTHROPIC_CUSTOM_HEADERS that carry a
+ * credential of their own. With any, what the API refused may not be the
+ * credential CodeR chose, and the advice says where to look first.
+ */
+export function adviceFor(credential: ClaudeCredential, competingHeaders: readonly string[] = []): CredentialAdvice {
+  const chosen = adviceForChosen(credential);
+  if (competingHeaders.length === 0) return chosen;
+  return {
+    ...chosen,
+    name: "credential",
+    fix: `ANTHROPIC_CUSTOM_HEADERS sends one of its own (${competingHeaders.join(", ")}) over or next to the ${chosen.name}: check that variable first.`,
+  };
+}
+
+function adviceForChosen(credential: ClaudeCredential): CredentialAdvice {
   switch (credential.kind) {
     case "auth-token":
       return { name: "auth token", fix: "Set a fresh ANTHROPIC_AUTH_TOKEN and restart CodeR." };
@@ -100,25 +125,4 @@ export function adviceFor(credential: ClaudeCredential): CredentialAdvice {
 /** The command that makes a Console sign-in on this machine, or makes it again. */
 export function loginCommand(profile: string): string {
   return `ant auth login --profile ${profile}`;
-}
-
-const REMOVED = "[credential removed]";
-/** A key or token of Anthropic's, whoever holds it: a sign-in's tokens never pass through CodeR's hands. */
-const ANTHROPIC_SECRET = /sk-ant-[A-Za-z0-9_-]{20,}/g;
-/** A configured value shorter than this is not looked for: taking it out would garble ordinary words. */
-const SHORTEST_SECRET = 8;
-
-/** Takes anything shaped like a key or token of Anthropic's out of a text that is about to be logged or stored. */
-export function withoutSecrets(text: string): string {
-  return text.replace(ANTHROPIC_SECRET, REMOVED);
-}
-
-/**
- * The same, and the configured secret too, whatever its shape. The other side
- * may repeat what it was sent, and so may an error raised on the way out.
- */
-export function redactorFor(credential: ClaudeCredential): (text: string) => string {
-  const secret = credential.kind === "auth-token" ? credential.token : credential.kind === "api-key" ? credential.key : "";
-  if (secret.length < SHORTEST_SECRET) return withoutSecrets;
-  return (text) => withoutSecrets(text.replaceAll(secret, REMOVED));
 }

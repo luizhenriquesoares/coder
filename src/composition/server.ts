@@ -12,7 +12,7 @@ import { SessionRepository } from "../application/SessionRepository.js";
 import type { Provider } from "../domain/change/types.js";
 import { InMemoryEventBus } from "../infrastructure/bus/InMemoryEventBus.js";
 import { ClaudeCouncil } from "../infrastructure/claude/ClaudeCouncil.js";
-import { adviceFor, ANTHROPIC_API, anthropicClient, describeCredential, originOf, redactorFor } from "../infrastructure/claude/credential.js";
+import { adviceFor, ANTHROPIC_API, anthropicClient, describeCredential, originOf } from "../infrastructure/claude/credential.js";
 import { requireSignIn } from "../infrastructure/claude/signIn.js";
 import { DemoSourceControl } from "../infrastructure/demo/DemoSourceControl.js";
 import { ScriptedCouncil } from "../infrastructure/demo/ScriptedCouncil.js";
@@ -31,6 +31,17 @@ export interface ClaudeWiring {
   readonly api: string;
   /** Scheme and host a sign-in is renewed at, when that is somewhere else. */
   readonly renewsAt?: string;
+}
+
+/** What the server says of itself once it listens. Kinds, names and addresses: never a key or a token. */
+export function startupSummary(config: ServerConfig, claude: ClaudeWiring | null): Record<string, unknown> {
+  return {
+    url: `http://${config.host}:${config.port}`,
+    claude: claude ?? "off (set ANTHROPIC_AUTH_TOKEN, ANTHROPIC_PROFILE or ANTHROPIC_API_KEY)",
+    github: config.github.token ? "token configured" : "read-only, public repositories",
+    repositories: config.github.repositories.map((r) => `${r.owner}/${r.repo}`),
+    autoReview: config.autoReview.enabled,
+  };
 }
 
 /** Composition root of the server: wires adapters to the application. */
@@ -118,10 +129,11 @@ async function wireClaude(claude: ServerConfig["claude"], logger: Logger): Promi
     credential.kind === "sign-in"
       ? await requireSignIn(credential.profile, { baseUrl, otherCredentials: ignoredCredentials, warn: (message) => logger.warn(message) })
       : null;
+  const { client, redact } = anthropicClient(credential, baseUrl);
   const council = new ClaudeCouncil({
-    client: anthropicClient(credential, baseUrl),
-    credentialAdvice: adviceFor(credential),
-    redact: redactorFor(credential),
+    client,
+    credentialAdvice: adviceFor(credential, credentialHeaders),
+    redact,
     model: claude.model,
     effort: claude.effort,
     maxOutputTokens: claude.maxOutputTokens,

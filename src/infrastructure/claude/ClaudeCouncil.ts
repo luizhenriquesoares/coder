@@ -18,7 +18,7 @@ import type {
 } from "../../application/ports.js";
 import { revisionKey, type PullRequestSnapshot } from "../../domain/change/types.js";
 import type { Usage } from "../../domain/deliberation/model.js";
-import { withoutSecrets, type CredentialAdvice } from "./credential.js";
+import type { CredentialAdvice } from "./credential.js";
 import { usageOf } from "./pricing.js";
 import {
   boundaryRule,
@@ -30,6 +30,7 @@ import {
   renderPullRequest,
   verdictTask,
 } from "./prompts.js";
+import { withoutSecrets } from "./redaction.js";
 import { DebateSchema, ImplementationSchema, OpeningSchema, VerdictSchema } from "./schemas.js";
 import { describeSignInFailure } from "./signIn.js";
 
@@ -193,9 +194,16 @@ export class ClaudeCouncil implements CouncilAgents {
 }
 
 const UNNAMED_CREDENTIAL: CredentialAdvice = { name: "credential", fix: "Check the Claude credential the server was given." };
+/** The runtime's words for a header it will not send. Its sentence quotes the header whole, a credential with it. */
+const UNSENDABLE_HEADER = /is an invalid header (name|value)|to a ByteString/;
 
 function toCouncilAgentError(error: unknown, credential: CredentialAdvice): CouncilAgentError {
   if (error instanceof CouncilAgentError) return error;
+  if (error instanceof Error && UNSENDABLE_HEADER.test(error.message)) {
+    return new CouncilAgentError(
+      `A header of the request could not be sent: it holds a line break or a character that cannot travel in one. It comes from the ${credential.name} or from ANTHROPIC_CUSTOM_HEADERS. ${credential.fix}`,
+    );
+  }
   // The API's own sentence says why: an expired token and a token of the wrong kind are refused in different words.
   const said = reasonOf(error);
   if (error instanceof Anthropic.AuthenticationError) {
@@ -210,7 +218,7 @@ function toCouncilAgentError(error: unknown, credential: CredentialAdvice): Coun
   if (error instanceof Anthropic.RateLimitError) return new CouncilAgentError("Rate limited by the Claude API after retries. Try again in a moment.");
   if (error instanceof Anthropic.BadRequestError) return new CouncilAgentError(`The Claude API rejected the request: ${said ? `${said}.` : error.message}`);
   // The sign-in gave no token to send: its stored tokens could not be read, or could not be renewed.
-  if (error instanceof WorkloadIdentityError) return new CouncilAgentError(describeSignInFailure(error, credential));
+  if (error instanceof WorkloadIdentityError) return new CouncilAgentError(describeSignInFailure(error, credential.login));
   if (error instanceof Anthropic.APIConnectionError) return new CouncilAgentError("Could not reach the Claude API.");
   if (error instanceof Anthropic.APIError) return new CouncilAgentError(`Claude API error ${error.status ?? ""}: ${error.message}`.trim());
   return new CouncilAgentError(error instanceof Error ? error.message : "Unknown error while asking the reviewer");

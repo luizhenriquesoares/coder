@@ -15,25 +15,18 @@ const flag = z
  * in it is refused here, by the name of its variable: further on, the error
  * for a header that cannot be sent quotes the whole value.
  */
-const secret = z
-  .string()
-  .trim()
-  .regex(/^[\x21\x23-\x26\x28-\x5B\x5D-\x7E]+$/, "the value has a space, a quote, a backslash, a line break or a character outside ASCII. Paste it alone, on one line")
-  .optional();
+const HEADER_SAFE = /^[\x21\x23-\x26\x28-\x5B\x5D-\x7E]+$/;
+const NOT_HEADER_SAFE = "the value has a space, a quote, a backslash, a line break or a character outside ASCII. Paste it alone, on one line";
 
-/** The name `ant auth login` stored a sign-in under. It becomes a file name, a command to copy and a line in the log. */
-const profileName = z
-  .string()
-  .trim()
-  .superRefine((name, context) => {
-    const problem = profileNameProblem(name);
-    if (problem) context.addIssue({ code: "custom", message: problem });
-  })
-  .optional();
+/** The variables that can hold the Claude credential, in CodeR's order of preference: a token before the sign-in, and both before a static key. */
+const CLAUDE_CREDENTIALS = ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE", "ANTHROPIC_API_KEY"] as const;
+/** One of them, as pasted. Only the one that is used is held to its rule: a placeholder on a line CodeR sets aside stops nothing. */
+const pasted = z.string().trim().optional();
 
+/** Why a value cannot be the name `ant auth login` stored a sign-in under. That name becomes a file name, a command to copy and a line in the log. */
 function profileNameProblem(name: string): string | null {
-  // Said without repeating the value: what looks like a secret is not printed.
-  if (name.length > 64 || /^sk-/i.test(name)) {
+  // Too long for a name, or begun like a secret of Anthropic's or of GitHub's. Said without repeating the value.
+  if (name.length > 32 || /^(sk-|gh[pousr]_|github_pat_)/i.test(name)) {
     return "this looks like a key or a token, not the name of a sign-in. A key goes in ANTHROPIC_API_KEY, a token in ANTHROPIC_AUTH_TOKEN";
   }
   if (name === "." || name === "..") return `"${name}" is not the name of a sign-in`;
@@ -50,9 +43,9 @@ const Environment = z.object({
   CODER_LANGUAGE: z.enum(LANGUAGES).default("en"),
   CODER_REVIEWER: z.string().default("human"),
 
-  ANTHROPIC_AUTH_TOKEN: secret,
-  ANTHROPIC_PROFILE: profileName,
-  ANTHROPIC_API_KEY: secret,
+  ANTHROPIC_AUTH_TOKEN: pasted,
+  ANTHROPIC_PROFILE: pasted,
+  ANTHROPIC_API_KEY: pasted,
   ANTHROPIC_BASE_URL: z.string().url().optional(),
   /** Read by the SDK, not by CodeR, which only looks for a credential in it. */
   ANTHROPIC_CUSTOM_HEADERS: z.string().optional(),
@@ -60,7 +53,7 @@ const Environment = z.object({
   CODER_EFFORT: z.enum(EFFORTS).default("high"),
   CODER_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(4000).max(128000).default(32000),
 
-  GITHUB_TOKEN: secret,
+  GITHUB_TOKEN: z.string().trim().regex(HEADER_SAFE, NOT_HEADER_SAFE).optional(),
   GITHUB_API_URL: z.string().url().optional(),
   GITHUB_REPOSITORIES: z.string().default(""),
   GITHUB_WEBHOOK_SECRET: z.string().optional(),
@@ -84,7 +77,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
       `Invalid configuration:\n  HOST: listening on ${e.HOST} needs CODER_API_TOKEN, or anyone who can reach this port could start reviews and publish them.`,
     );
   }
-  const [chosen, ...others] = claudeCredentials(e);
+  const [chosen, ...ignored] = CLAUDE_CREDENTIALS.filter((variable) => e[variable]);
+  const credential = chosen ? claudeCredentialIn(chosen, e) : null;
   return {
     port: e.PORT,
     host: e.HOST,
@@ -95,9 +89,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     reviewerName: e.CODER_REVIEWER,
     claude: {
       /** Null leaves the Claude council off. */
-      credential: chosen?.credential ?? null,
+      credential,
       /** Variables that hold another credential, set but not used. */
-      ignoredCredentials: others.map((other) => other.variable),
+      ignoredCredentials: ignored,
       /** Headers of ANTHROPIC_CUSTOM_HEADERS that carry a credential of their own. */
       credentialHeaders: credentialHeaders(e.ANTHROPIC_CUSTOM_HEADERS),
       baseUrl: e.ANTHROPIC_BASE_URL,
@@ -115,20 +109,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
   };
 }
 
-/**
- * The Claude credentials this environment holds, in CodeR's order of
- * preference: a token before the sign-in, and both before a static key.
- * Only the first is used.
- */
-function claudeCredentials(e: z.infer<typeof Environment>): { variable: string; credential: ClaudeCredential }[] {
-  const configured: { variable: string; credential: ClaudeCredential }[] = [];
-  if (e.ANTHROPIC_AUTH_TOKEN) {
-    const oauth = isOAuthToken(e.ANTHROPIC_AUTH_TOKEN, e.ANTHROPIC_BASE_URL);
-    configured.push({ variable: "ANTHROPIC_AUTH_TOKEN", credential: { kind: "auth-token", token: e.ANTHROPIC_AUTH_TOKEN, oauth } });
+/** The credential a variable holds, or the reason the server cannot start on it. */
+function claudeCredentialIn(variable: (typeof CLAUDE_CREDENTIALS)[number], e: z.infer<typeof Environment>): ClaudeCredential {
+  const value = e[variable]!;
+  const problem = variable === "ANTHROPIC_PROFILE" ? profileNameProblem(value) : HEADER_SAFE.test(value) ? null : NOT_HEADER_SAFE;
+  if (problem) throw new Error(`Invalid configuration:\n  ${variable}: ${problem}`);
+  switch (variable) {
+    case "ANTHROPIC_AUTH_TOKEN":
+      return { kind: "auth-token", token: value, oauth: isOAuthToken(value, e.ANTHROPIC_BASE_URL) };
+    case "ANTHROPIC_PROFILE":
+      return { kind: "sign-in", profile: value };
+    case "ANTHROPIC_API_KEY":
+      return { kind: "api-key", key: value };
   }
-  if (e.ANTHROPIC_PROFILE) configured.push({ variable: "ANTHROPIC_PROFILE", credential: { kind: "sign-in", profile: e.ANTHROPIC_PROFILE } });
-  if (e.ANTHROPIC_API_KEY) configured.push({ variable: "ANTHROPIC_API_KEY", credential: { kind: "api-key", key: e.ANTHROPIC_API_KEY } });
-  return configured;
 }
 
 /**

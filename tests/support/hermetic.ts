@@ -13,3 +13,14 @@ for (const name of Object.keys(process.env)) {
 }
 process.env.ANTHROPIC_BASE_URL = "http://127.0.0.1:9";
 process.env.ANTHROPIC_CONFIG_DIR = join(tmpdir(), "coder-tests-no-sign-in-here");
+
+/**
+ * And no test talks to another machine. One that drops the address above, to
+ * see where the SDK goes without it, must not find the real API there.
+ */
+const send = globalThis.fetch;
+globalThis.fetch = async (input, init) => {
+  const { hostname, origin } = new URL(input instanceof Request ? input.url : input);
+  if (!["127.0.0.1", "localhost", "[::1]"].includes(hostname)) throw new Error(`A test called ${origin}. The tests talk to this machine only.`);
+  return send(input, init);
+};

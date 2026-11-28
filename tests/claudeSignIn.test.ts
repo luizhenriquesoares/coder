@@ -1,7 +1,23 @@
-import { chmod, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { WorkloadIdentityError } from "@anthropic-ai/sdk/lib/credentials/types";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { betas, claudeApi, CODER_BETA, OAUTH_BETA, quietCouncil, recordingLogger, review, signIn, startServer, storedIn, tidyUp } from "./support/claudeServer.js";
+import { describeSignInFailure } from "../src/infrastructure/claude/signIn.js";
+import {
+  betas,
+  claudeApi,
+  CODER_BETA,
+  leftBehind,
+  OAUTH_BETA,
+  quietCouncil,
+  recordingLogger,
+  review,
+  reviewOn,
+  signIn,
+  startServer,
+  temporaryDirectory,
+  tidyUp,
+} from "./support/claudeServer.js";
 
 /**
  * The Claude Console sign-in that `ant auth login` stores on a machine, as
@@ -87,6 +103,29 @@ describe("the Console sign-in as the server's credential", () => {
     expect(state.status).toBe("concluded");
     expect(claude).toEqual({ model: "claude-opus-5-5", credential: "Console sign-in (profile work)", api: api.baseURL });
     expect(api.renewals).toHaveLength(1);
+  });
+
+  it("sends the reviews to the address in its settings when ANTHROPIC_BASE_URL names none", async () => {
+    const api = await claudeApi();
+    await signIn("work", fresh, { base_url: api.baseURL });
+    vi.stubEnv("ANTHROPIC_BASE_URL", undefined);
+    const server = await startServer({ ANTHROPIC_PROFILE: "work" });
+    const { state } = await reviewOn(server);
+    expect(state.status).toBe("concluded");
+    // What the start-up line says is where the requests arrived.
+    expect(server.claude).toEqual({ model: "claude-opus-5-5", credential: "Console sign-in (profile work)", api: api.baseURL });
+    expect(api.requests.length).toBeGreaterThan(0);
+  });
+
+  it("reads its tokens from where its settings say they are", async () => {
+    const api = await claudeApi();
+    const elsewhere = join(await temporaryDirectory("coder-tokens-"), "tokens.json");
+    const { tokensFile } = await signIn("work", fresh, { base_url: api.baseURL, authentication: { type: "user_oauth", client_id: "client-of-the-test", credentials_path: elsewhere } });
+    await rename(tokensFile, elsewhere);
+    const { state } = await review(api, { ANTHROPIC_PROFILE: "work" });
+    expect(state.status).toBe("concluded");
+    expect(api.requests.length).toBeGreaterThan(0);
+    for (const request of api.requests) expect(request.headers.authorization).toBe(`Bearer ${ACCESS}`);
   });
 });
 
@@ -177,49 +216,82 @@ describe("a sign-in that could not work stops the start", () => {
 });
 
 describe("a sign-in that fails during a review", () => {
+  const unusable = (why: string) => `The Console sign-in could not be used: ${why}`;
+
   it("is sent back to the login when it can no longer be renewed, with nothing of what the endpoint echoed", async () => {
     const { logger, lines } = recordingLogger();
     // An endpoint that repeats the refresh token it was sent.
     const api = await claudeApi(quietCouncil, (asked) => ({ status: 400, error: "invalid_grant", description: `refresh token ${asked.body.refresh_token} has expired` }));
     await signIn("work", ranOut, { base_url: api.baseURL });
-    const { state, failure, dataDir } = await review(api, { ANTHROPIC_PROFILE: "work" }, logger);
+    const run = await review(api, { ANTHROPIC_PROFILE: "work" }, logger);
 
-    expect(state.status).toBe("failed");
+    expect(run.state.status).toBe("failed");
     expect(api.renewals.length).toBeGreaterThan(0);
     expect(api.requests).toHaveLength(0); // no review was sent with a token known to be dead
-    expect(failure).toBe(`The Console sign-in could not be renewed (HTTP 400, invalid_grant). Try once more; if it fails the same way, run ${again}`);
-    for (const text of [JSON.stringify(lines), JSON.stringify(state), await storedIn(dataDir)]) {
-      expect(text).not.toContain(REFRESH);
-      expect(text).not.toContain(ACCESS);
+    expect(run.failure).toBe(`The Console sign-in could not be renewed (HTTP 400, invalid_grant). Try once more; if it fails the same way, run ${again}`);
+    const kept = await leftBehind(run, lines);
+    for (const token of [REFRESH, ACCESS]) expect(kept).not.toContain(token);
+  });
+
+  it("says of a renewal that failed whether to try again, to wait or to log in, and no more of the answer than its status and code", async () => {
+    const answers: [status: number, error: string, says: string][] = [
+      [401, "invalid_client", `(HTTP 401, invalid_client). Try once more; if it fails the same way, run ${again}`],
+      [429, "rate_limit_error", "(HTTP 429, rate_limit_error). Try again in a moment."],
+      [503, "overloaded", "(HTTP 503, overloaded). Try again in a moment."],
+      // A gateway that passes the Messages API on and nothing else.
+      [404, "Not Found", "(HTTP 404)."],
+    ];
+    for (const [status, error, says] of answers) {
+      const api = await claudeApi(quietCouncil, () => ({ status, error }));
+      await signIn("work", ranOut, { base_url: api.baseURL });
+      expect((await review(api, { ANTHROPIC_PROFILE: "work" })).failure, String(status)).toBe(`The Console sign-in could not be renewed ${says}`);
+    }
+
+    // And no answer at all: an address nothing listens on.
+    await signIn("work", ranOut, { base_url: "http://127.0.0.1:9" });
+    expect((await review(await claudeApi(), { ANTHROPIC_PROFILE: "work" })).failure).toBe(unusable("the address that renews it could not be reached. Try again in a moment."));
+  });
+
+  it("says in its own words what became of tokens it can no longer use, and not where the file is", async () => {
+    const spoiled: [how: string, spoil: (tokensFile: string) => Promise<unknown>, says: string][] = [
+      ["removed", (file) => rm(file), `its stored tokens are missing or cannot be read. Run ${again}`],
+      ["cut short", (file) => writeFile(file, `${ACCESS} was cut short`), `its stored tokens are damaged. Run ${again}`],
+      ["emptied", (file) => writeFile(file, JSON.stringify({ type: "oauth_token" })), `its stored tokens hold no access token. Run ${again}`],
+      // Run out, with no refresh token to renew it by.
+      ["run out", (file) => writeFile(file, JSON.stringify({ type: "oauth_token", access_token: ACCESS, expires_at: 1 })), `its token ran out and nothing can renew it. Run ${again}`],
+    ];
+    for (const [how, spoil, says] of spoiled) {
+      const api = await claudeApi();
+      const { directory, tokensFile } = await signIn("work", fresh, { base_url: api.baseURL });
+      const server = await startServer({ ANTHROPIC_PROFILE: "work", ANTHROPIC_BASE_URL: api.baseURL });
+      await spoil(tokensFile); // after the start, which would have refused some of these
+      const { failure } = await reviewOn(server);
+      expect(failure, how).toBe(unusable(says));
+      expect(failure, how).not.toContain(directory);
+      expect(api.requests, how).toHaveLength(0);
     }
   });
 
-  it("is told to wait when the token endpoint is what fails, and no more than the status when the address renews nothing", async () => {
-    const overloaded = await claudeApi(quietCouncil, () => ({ status: 503, error: "overloaded" }));
-    await signIn("work", ranOut, { base_url: overloaded.baseURL });
-    expect((await review(overloaded, { ANTHROPIC_PROFILE: "work" })).failure).toBe("The Console sign-in could not be renewed (HTTP 503, overloaded). Try again in a moment.");
-
-    // A gateway that passes the Messages API on and nothing else.
-    const gateway = await claudeApi(quietCouncil, () => ({ status: 404, error: "Not Found" }));
-    await signIn("work", ranOut, { base_url: gateway.baseURL });
-    expect((await review(gateway, { ANTHROPIC_PROFILE: "work" })).failure).toBe("The Console sign-in could not be renewed (HTTP 404).");
+  it.skipIf(process.platform === "win32")("sends the operator back to the start when its tokens were opened to other users", async () => {
+    const api = await claudeApi();
+    const { directory, tokensFile } = await signIn("work", fresh, { base_url: api.baseURL });
+    const server = await startServer({ ANTHROPIC_PROFILE: "work", ANTHROPIC_BASE_URL: api.baseURL });
+    await chmod(tokensFile, 0o644);
+    const { failure } = await reviewOn(server);
+    expect(failure).toBe(unusable("its stored tokens are open to other users of this machine. Restart CodeR to read which file, and the command that closes it."));
+    expect(failure).not.toContain(directory);
   });
 
-  it("is sent back to the login when its token ran out and nothing can renew it", async () => {
-    const api = await claudeApi();
-    const { tokensFile } = await signIn("work", { accessToken: ACCESS, expiresIn: -60 }, { base_url: api.baseURL });
-    const { failure } = await review(api, { ANTHROPIC_PROFILE: "work" });
-    expect(failure).toBe(
-      `The Console sign-in could not be used: Access token at ${tokensFile} has expired and no refresh is available (client_id set, refresh_token empty). Run ${again}`,
-    );
-  });
-
-  it("does not quote stored tokens it could not parse", async () => {
-    const api = await claudeApi();
-    const { tokensFile } = await signIn("work", fresh, { base_url: api.baseURL });
-    await writeFile(tokensFile, `${ACCESS} was cut short`);
-    const { failure } = await review(api, { ANTHROPIC_PROFILE: "work" });
-    expect(failure).toBe(`The Console sign-in could not be used: Credentials file at ${tokensFile} is not valid JSON. Run ${again}`);
+  it("keeps the SDK's sentence for a state it has no words for, without the error the SDK appends to it", () => {
+    // What the start-up check refuses, should the SDK ever meet it later.
+    const refusing = new WorkloadIdentityError('Refusing to send credential over non-https token endpoint "http://console.example.com"');
+    expect(describeSignInFailure(refusing, "ant auth login --profile work")).toBe(unusable('Refusing to send credential over non-https token endpoint "http://console.example.com".'));
+    // An appended error quotes what it choked on.
+    const quoting = new WorkloadIdentityError(`Invalid token endpoint base URL "console": TypeError: Invalid URL, input: ${ACCESS}`);
+    expect(describeSignInFailure(quoting, "ant auth login --profile work")).toBe(unusable('Invalid token endpoint base URL "console".'));
+    // A council that was not told how its sign-in is made says so in plain words.
+    const refused = new WorkloadIdentityError("User OAuth refresh failed (HTTP 400): {}", 400, '{"error":"invalid_grant"}');
+    expect(describeSignInFailure(refused)).toBe("The Console sign-in could not be renewed (HTTP 400, invalid_grant). Try once more; if it fails the same way, sign in again.");
   });
 
   it("is sent back to the login when the API refuses it even after a renewal", async () => {
@@ -227,5 +299,35 @@ describe("a sign-in that fails during a review", () => {
     await signIn("work", fresh, { base_url: api.baseURL });
     const { failure } = await review(api, { ANTHROPIC_PROFILE: "work" });
     expect(failure).toBe(`The Claude API refused the Console sign-in (OAuth token has been revoked). Run ${again}`);
+  });
+
+  it("leaves none of its tokens in what the other side says of them, whatever shape they have", async () => {
+    const { logger, lines } = recordingLogger();
+    // A gateway with a sign-in of its own making, which repeats the token it refuses.
+    const api = await claudeApi(
+      (request) => ({ status: 401, errorType: "authentication_error", message: `unknown token: ${String(request.headers.authorization).replace("Bearer ", "")}` }),
+      () => ({ accessToken: "opaque-renewed-access-token", expiresIn: 3600, refreshToken: "opaque-next-refresh-token" }),
+    );
+    await signIn("work", { accessToken: "opaque-access-token", expiresIn: 3600, refreshToken: "opaque-refresh-token" }, { base_url: api.baseURL });
+    const run = await review(api, { ANTHROPIC_PROFILE: "work" }, logger);
+
+    expect(run.failure).toBe(`The Claude API refused the Console sign-in (unknown token: [credential removed]). Run ${again}`);
+    expect(api.renewals.length).toBeGreaterThan(0); // the refusal sent it for a new token, refresh token in hand
+    const kept = await leftBehind(run, lines);
+    for (const token of ["opaque-access-token", "opaque-renewed-access-token", "opaque-refresh-token", "opaque-next-refresh-token"]) expect(kept, token).not.toContain(token);
+  });
+
+  it("is sent back to the login when its stored token could not travel in a header", async () => {
+    const { logger, lines } = recordingLogger();
+    const api = await claudeApi();
+    // The runtime's own error for such a header quotes it whole.
+    await signIn("work", { accessToken: "opaque-access\ntoken-SECRETPART", expiresIn: 3600 }, { base_url: api.baseURL });
+    const run = await review(api, { ANTHROPIC_PROFILE: "work" }, logger);
+
+    expect(run.failure).toBe(
+      `A header of the request could not be sent: it holds a line break or a character that cannot travel in one. It comes from the Console sign-in or from ANTHROPIC_CUSTOM_HEADERS. Run ${again}`,
+    );
+    expect(api.requests).toHaveLength(0);
+    expect(await leftBehind(run, lines)).not.toContain("SECRETPART");
   });
 });
