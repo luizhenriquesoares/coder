@@ -288,12 +288,13 @@ describe("Claude council against the Messages API wire format", () => {
     expect(state.statements.at(-1)).toMatchObject({ reviewer: "moderator", failed: true });
   });
 
-  it("fails the session with an actionable message when the key is rejected", async () => {
+  it("fails the session with the API's reason when the credential is refused", async () => {
     const { state } = await review(() => ({ status: 401, errorType: "authentication_error", message: "invalid x-api-key" }));
     expect(state.status).toBe("failed");
     expect(state.failureReason).toMatch(/opening round/);
     expect(state.statements.every((s) => s.failed)).toBe(true);
-    expect(state.statements[0]!.text).toBe("The Anthropic API key was rejected. Check ANTHROPIC_API_KEY.");
+    // What to do about each kind of credential is in claudeCredentials.test.ts.
+    expect(state.statements[0]!.text).toBe("The Claude API refused the credential (invalid x-api-key). Check the Claude credential the server was given.");
   });
 });
 

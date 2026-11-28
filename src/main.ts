@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describeError } from "./application/errors.js";
 import type { Logger } from "./application/ports.js";
 import { loadConfig } from "./composition/config.js";
-import { createServerApplication } from "./composition/server.js";
+import { createServerApplication, startupSummary } from "./composition/server.js";
 import { githubWebhookReceiver } from "./infrastructure/github/webhook.js";
 import { buildHttpServer } from "./infrastructure/http/server.js";
 
@@ -20,7 +20,7 @@ function format(level: string, message: string, data?: Record<string, unknown>):
 
 async function main(): Promise<void> {
   const config = loadConfig();
-  const { application, autoReview, conductReview } = await createServerApplication(config, logger);
+  const { application, autoReview, conductReview, claude } = await createServerApplication(config, logger);
   const here = dirname(fileURLToPath(import.meta.url));
   const server = await buildHttpServer({
     api: application,
@@ -32,13 +32,7 @@ async function main(): Promise<void> {
   });
 
   await server.listen({ port: config.port, host: config.host });
-  logger.info("CodeR is listening", {
-    url: `http://${config.host}:${config.port}`,
-    claude: config.claude.enabled ? config.claude.model : "off (set ANTHROPIC_API_KEY)",
-    github: config.github.token ? "token configured" : "read-only, public repositories",
-    repositories: config.github.repositories.map((r) => `${r.owner}/${r.repo}`),
-    autoReview: config.autoReview.enabled,
-  });
+  logger.info("CodeR is listening", startupSummary(config, claude));
 
   if (config.autoReview.enabled) {
     const poll = () => autoReview.poll().catch((error) => logger.warn("Polling failed", { error: describeError(error) }));
